@@ -90,7 +90,7 @@ export default class TutorialScene extends BaseScene {
     if (this.canNext) {
       ctx.font = '16px Arial'
       ctx.fillStyle = '#666'
-      ctx.fillText('点击屏幕继续', this.width / 2, 135)
+      ctx.fillText('\u70b9\u51fb\u5c4f\u5e55\u7ee7\u7eed', this.width / 2, 135)
     }
   }
 
@@ -152,7 +152,7 @@ export default class TutorialScene extends BaseScene {
   stepShowBoard() {
     this.resetBoard()
 
-    this.text = '这是一个 3×3 的方格棋盘，每个方格有 4 条边'
+    this.text = '\u8fd9\u662f\u4e00\u4e2a 3x3 \u7684\u65b9\u683c\u68cb\u76d8\uff0c\u6bcf\u4e2a\u65b9\u683c\u6709 4 \u6761\u8fb9'
 
     const cell = this.board.getCell('c_0_0')
     this.guide.setHighlightCell(cell)
@@ -160,15 +160,14 @@ export default class TutorialScene extends BaseScene {
     this.canNext = true
   }
 
-  // 2 玩家占边，机器占边
   stepTakeTurns() {
     this.resetBoard()
 
-    this.text = '玩家轮流点击边进行占领，请点击高亮边'
+    this.text = '\u73a9\u5bb6\u8f6e\u6d41\u70b9\u51fb\u8fb9\u8fdb\u884c\u5360\u9886\uff0c\u8bf7\u70b9\u51fb\u9ad8\u4eae\u8fb9'
     this.phase = 'waitEdge'
 
     this.setTargetEdge('h_0_0', 'p1', () => {
-      this.text = '你占领了一条边，接下来机器会占领另一条边'
+      this.text = '\u4f60\u5360\u9886\u4e86\u4e00\u6761\u8fb9\uff0c\u63a5\u4e0b\u6765\u673a\u5668\u4f1a\u5360\u9886\u53e6\u4e00\u6761\u8fb9'
 
       this.phase = 'animating'
       this.setTimer(() => {
@@ -179,7 +178,7 @@ export default class TutorialScene extends BaseScene {
         const pos = this.getEdgeCenter(edge)
         this.guide.setFinger(pos.x, pos.y)
 
-        this.text = '机器完成占领'
+        this.text = '\u673a\u5668\u5b8c\u6210\u5360\u9886'
         this.phase = 'waitNext'
         this.canNext = true
       }, 700)
@@ -190,7 +189,7 @@ export default class TutorialScene extends BaseScene {
   stepCloseCellAndExtraMove() {
     this.resetBoard()
 
-    this.text = '当 4 条边都被占领时，方格会被闭合'
+    this.text = '\u5f53 4 \u6761\u8fb9\u90fd\u88ab\u5360\u9886\u65f6\uff0c\u65b9\u683c\u4f1a\u88ab\u95ed\u5408'
 
     this.simulateEdge('h_0_0', 'p1')
     this.simulateEdge('v_1_0', 'p2')
@@ -201,21 +200,19 @@ export default class TutorialScene extends BaseScene {
     this.setTargetEdge('v_0_0', 'p1', () => {
       this.board.getCell('c_0_0').ownerId = 'p1'
 
-      this.text = '闭合格子的玩家可以再走一次'
+      this.text = '\u95ed\u5408\u683c\u5b50\u7684\u73a9\u5bb6\u53ef\u4ee5\u518d\u8d70\u4e00\u6b21'
       this.setTargetEdge('h_1_0', 'p1', () => {
-        this.text = '追加行动完成'
+        this.text = '\u8ffd\u52a0\u884c\u52a8\u5b8c\u6210'
         this.phase = 'waitNext'
         this.canNext = true
         this.resetGuide()
       })
     })
   }
-
-  // 4 一次闭合多个格子 + 只追加一次
   stepCloseTwoCellsAndExtraMove() {
     this.resetBoard()
 
-    this.text = '一次可以闭合多个格子，但只能追加一次行动'
+    this.text = '\u4e00\u6b21\u53ef\u4ee5\u95ed\u5408\u591a\u4e2a\u683c\u5b50\uff0c\u4f46\u53ea\u80fd\u8ffd\u52a0\u4e00\u6b21\u884c\u52a8'
 
     this.simulateEdge('h_0_0', 'p1')
     this.simulateEdge('h_1_0', 'p2')
@@ -230,10 +227,10 @@ export default class TutorialScene extends BaseScene {
       this.board.getCell('c_0_0').ownerId = 'p1'
       this.board.getCell('c_1_0').ownerId = 'p1'
 
-      this.text = '你一次闭合了两个方格，但只获得一次追加行动'
+      this.text = '\u4f60\u4e00\u6b21\u95ed\u5408\u4e86\u4e24\u4e2a\u65b9\u683c\uff0c\u4f46\u53ea\u83b7\u5f97\u4e00\u6b21\u8ffd\u52a0\u884c\u52a8'
 
       this.setTargetEdge('h_2_0', 'p1', () => {
-        this.text = '追加行动完成'
+        this.text = '\u8ffd\u52a0\u884c\u52a8\u5b8c\u6210'
         this.phase = 'waitNext'
         this.canNext = true
         this.resetGuide()
@@ -245,7 +242,7 @@ export default class TutorialScene extends BaseScene {
   stepWinCondition() {
     this.resetBoard()
 
-    this.text = '当所有格子被占满时，数量多者获胜'
+    this.text = '\u5f53\u6240\u6709\u683c\u5b50\u88ab\u5360\u6ee1\u65f6\uff0c\u6570\u91cf\u591a\u8005\u83b7\u80dc'
 
     let index = 0
     for (const cell of this.board.cells.values()) {

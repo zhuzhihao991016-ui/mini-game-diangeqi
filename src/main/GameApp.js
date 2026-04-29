@@ -25,6 +25,8 @@ export default class GameApp {
 
     this.sceneManager = new SceneManager()
     this.inputManager = new InputManager(canvas, this.dpr)
+    this.userManager = options.userManager || wx.__userManager || null
+    this.leaderboardManager = options.leaderboardManager || wx.__leaderboardManager || null
 
     this.loop = new GameLoop({
       update: this.update.bind(this),
@@ -43,11 +45,19 @@ export default class GameApp {
       inputManager: this.inputManager,
       sceneManager: this.sceneManager,
       width: this.width,
-      height: this.height
+      height: this.height,
+      userManager: this.userManager,
+      leaderboardManager: this.leaderboardManager
     })
 
     this.sceneManager.setScene(menuScene)
     this.loop.start()
+
+    if (this.userManager && this.userManager.ensureLogin) {
+      this.userManager.ensureLogin().catch(err => {
+        console.warn('用户资料初始化失败:', err)
+      })
+    }
   }
 
   bindInviteEvents() {

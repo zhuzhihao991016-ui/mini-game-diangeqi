@@ -25,5 +25,8 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Local generated notes
+# Local generated notes and archives
 /文件树.txt
+
+/???.txt
+/*.zip

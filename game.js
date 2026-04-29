@@ -2,6 +2,8 @@ import GameApp from './src/main/GameApp'
 import NetManager from './src/Network/NetManager'
 import RoomManager from './src/Network/RoomManager'
 import FrameSyncManager from './src/Network/FrameSyncManager'
+import UserManager from './src/user/UserManager'
+import InfernoLeaderboard from './src/state/InfernoLeaderboard'
 import { MessageType } from './src/Network/SyncProtocol'
 
 const windowInfo = wx.getWindowInfo()
@@ -24,10 +26,24 @@ wx.cloud.init({
   env: CLOUD_ENV_ID
 })
 
+const userManager = new UserManager({
+  envId: CLOUD_ENV_ID,
+  serviceName: CLOUD_SERVICE_NAME
+})
+const leaderboardManager = new InfernoLeaderboard({
+  envId: CLOUD_ENV_ID,
+  serviceName: CLOUD_SERVICE_NAME
+})
+
+wx.__userManager = userManager
+wx.__leaderboardManager = leaderboardManager
+
 const app = new GameApp(canvas, ctx, {
   width,
   height,
-  dpr
+  dpr,
+  userManager,
+  leaderboardManager
 })
 
 app.start()
@@ -35,7 +51,8 @@ app.start()
 const netManager = new NetManager({
   envId: CLOUD_ENV_ID,
   serviceName: CLOUD_SERVICE_NAME,
-  path: CLOUD_WS_PATH
+  path: CLOUD_WS_PATH,
+  userManager
 })
 
 const roomManager = new RoomManager(netManager)

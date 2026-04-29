@@ -136,6 +136,7 @@ export default class RoomManager extends EventEmitter {
       roomInfo: {
         roomId: roomState.roomId,
         phase: roomState.phase,
+        board: roomState.board || null,
         currentTurnPlayerId: roomState.currentTurnPlayerId,
         playerList: (roomState.players || []).map(player => ({
           playerId: player.playerId,
@@ -195,7 +196,10 @@ export default class RoomManager extends EventEmitter {
     const nickname = options.nickname || '玩家1'
 
     this.netManager.send(MessageType.CREATE_ROOM, {
-      nickname
+      nickname,
+      boardType: options.boardType || 'square',
+      rows: options.rows || 3,
+      cols: options.cols || 3
     })
 
     return this.waitFor(MessageType.ROOM_CREATED)

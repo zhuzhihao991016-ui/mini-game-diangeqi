@@ -23,6 +23,7 @@ export default class NetManager extends EventEmitter {
     this.envId = options.envId || ''
     this.serviceName = options.serviceName || ''
     this.path = options.path || '/ws'
+    this.userManager = options.userManager || wx.__userManager || null
 
     this.socketTask = null
     this.connected = false
@@ -41,6 +42,12 @@ export default class NetManager extends EventEmitter {
     this.currentReconnectDelay = this.reconnectDelay
 
     this.manualClosed = false
+
+    if (this.userManager && typeof this.userManager.onProfileChanged === 'function') {
+      this.userManager.onProfileChanged(() => {
+        if (this.connected) this.sendHello()
+      })
+    }
   }
 
   connect() {
@@ -95,7 +102,7 @@ export default class NetManager extends EventEmitter {
           })
 
           this.socketTask.onError(err => {
-            console.error('WebSocket 错误：', err)
+            console.error('WebSocket error:', err)
 
             this.emit('error', err)
           })
@@ -133,12 +140,25 @@ export default class NetManager extends EventEmitter {
     })
   }
 
-  sendHello() {
+  async sendHello() {
     const roomId = this.getLastRoomId()
+    let profile = this.userManager ? this.userManager.profile : null
+
+    if (this.userManager && typeof this.userManager.ensureLogin === 'function') {
+      try {
+        profile = await this.userManager.ensureLogin()
+      } catch (err) {
+        console.warn('用户登录未完成，使用本地资料发送 HELLO:', err)
+        profile = this.userManager.profile
+      }
+    }
 
     this.send(MessageType.HELLO, {
       clientKey: this.clientKey,
-      roomId
+      roomId,
+      userPlayerId: profile && profile.playerId ? profile.playerId : '',
+      openId: profile && profile.openId ? profile.openId : '',
+      nickname: profile && profile.nickname ? profile.nickname : ''
     })
   }
 
