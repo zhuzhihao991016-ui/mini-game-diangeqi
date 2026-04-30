@@ -3,6 +3,7 @@ import BoardFactory from '../core/board/BoardFactory'
 import Renderer from '../render/Renderer'
 import BoardRenderer from '../render/BoardRenderer'
 import GuideRenderer from '../render/GuideRenderer'
+import { getSceneSafeLayout } from '../utils/SafeArea'
 
 export default class TutorialScene extends BaseScene {
   constructor({ canvas, ctx, inputManager, sceneManager, width, height }) {
@@ -19,6 +20,7 @@ export default class TutorialScene extends BaseScene {
     this.renderer = new Renderer(ctx, canvas)
     this.boardRenderer = new BoardRenderer(ctx)
     this.guide = new GuideRenderer(ctx)
+    this.safeLayout = getSceneSafeLayout(this.width, this.height)
 
     this.board = BoardFactory.createSquareBoard(3, 3)
     this.layout = this.createLayout()
@@ -47,7 +49,7 @@ export default class TutorialScene extends BaseScene {
     return {
       cellSize,
       originX: (this.width - boardWidth) / 2,
-      originY: 200
+      originY: this.safeLayout.insets.top + 220
     }
   }
 
@@ -85,12 +87,12 @@ export default class TutorialScene extends BaseScene {
     ctx.fillStyle = '#000'
     ctx.font = '20px Arial'
     ctx.textAlign = 'center'
-    ctx.fillText(this.text, this.width / 2, 100)
+    ctx.fillText(this.text, this.width / 2, this.safeLayout.insets.top + 100)
 
     if (this.canNext) {
       ctx.font = '16px Arial'
       ctx.fillStyle = '#666'
-      ctx.fillText('\u70b9\u51fb\u5c4f\u5e55\u7ee7\u7eed', this.width / 2, 135)
+      ctx.fillText('\u70b9\u51fb\u5c4f\u5e55\u7ee7\u7eed', this.width / 2, this.safeLayout.insets.top + 135)
     }
   }
 

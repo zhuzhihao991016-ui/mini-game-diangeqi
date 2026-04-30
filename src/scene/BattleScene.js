@@ -9,6 +9,7 @@ import HitTest from '../input/HitTest'
 import ClaimEdgeAction from '../core/action/ClaimEdgeAction'
 import AnimationManager from '../animation/AnimationManager'
 import SimpleAI from '../ai/SimpleAI'
+import { getSceneSafeLayout } from '../utils/SafeArea'
 
 const PLAYER_COLORS = {
   p1: '#4A90E2',
@@ -44,6 +45,7 @@ export default class BattleScene extends BaseScene {
     this.boardRenderer = new BoardRenderer(ctx)
     this.gameOverPanel = new GameOverPanel(ctx, canvas, this.width, this.height)
     this.animationManager = new AnimationManager()
+    this.safeLayout = getSceneSafeLayout(this.width, this.height)
 
     this.clientId = Math.random().toString(36).slice(2)
 
@@ -53,6 +55,7 @@ export default class BattleScene extends BaseScene {
     : 'p1'
 
     this.rematchRequested = false
+    this.undoRequested = false
     this.lastRoomRoundIndex = null
     this.frameSyncInitialized = false
 
@@ -62,13 +65,34 @@ export default class BattleScene extends BaseScene {
   
     this.backButton = {
       x: 20,
-      y: 20,
+      y: this.safeLayout.top,
       width: 120,
+      height: 44
+    }
+
+    this.undoButton = {
+      x: this.width - 204,
+      y: 20,
+      width: 88,
+      height: 44
+    }
+
+    this.hintButton = {
+      x: this.width - 108,
+      y: 20,
+      width: 88,
       height: 44
     }
   
     this.ai = new SimpleAI({ difficulty: this.aiDifficulty })
+    this.aiThinking = false
+    this.aiThinkTimer = null
+    this.undoStack = []
+    this.hintEdgeId = null
+    this.turnCoverVisible = false
+    this.turnCoverPlayerId = null
     this.resultRecorded = false
+    this.lastAppliedRoomStateKey = ''
 
     this.resetGame()
   }
@@ -93,6 +117,15 @@ export default class BattleScene extends BaseScene {
     this.layout = this.createBoardLayout()
   
     this.animationManager = new AnimationManager()
+    this.undoStack = []
+    this.hintEdgeId = null
+    this.turnCoverVisible = false
+    this.turnCoverPlayerId = null
+    this.aiThinking = false
+    if (this.aiThinkTimer) {
+      clearTimeout(this.aiThinkTimer)
+      this.aiThinkTimer = null
+    }
     this.resultRecorded = false
 
     this.hitTest = new HitTest({
@@ -158,6 +191,31 @@ export default class BattleScene extends BaseScene {
         this.applyOnlineRoomReset(payload)
       })
     }
+
+    if (typeof this.onlineManager.onUndoVote === 'function') {
+      this.onlineManager.onUndoVote(payload => {
+        console.log('undo vote:', payload)
+
+        if (
+          payload &&
+          payload.votes &&
+          payload.votes.indexOf(this.onlineManager.playerId) >= 0
+        ) {
+          this.undoRequested = true
+        }
+      })
+    }
+
+    if (typeof this.onlineManager.onRoomUndo === 'function') {
+      this.onlineManager.onRoomUndo(payload => {
+        console.log('room undo:', payload)
+        this.undoRequested = false
+
+        if (payload && payload.roomState) {
+          this.applyRoomStateToLocalGame(payload.roomState)
+        }
+      })
+    }
   
     this.onlineManager.onRoomUpdate(roomState => {
       if (!roomState) return
@@ -168,6 +226,8 @@ export default class BattleScene extends BaseScene {
       // pauseReason: room.pauseReason || ''
       this.roomPaused = !!roomState.paused
       this.updatePlayerNamesFromRoom(roomState)
+      this.updateOnlineUndoState(roomState)
+      this.applyAuthoritativeRoomState(roomState)
     
       if (this.roomPaused) {
         if (roomState.pauseReason === 'player_disconnected') {
@@ -226,7 +286,6 @@ export default class BattleScene extends BaseScene {
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(text, this.width / 2, y + h / 2)
-  
     ctx.restore()
   }
 
@@ -234,6 +293,10 @@ export default class BattleScene extends BaseScene {
     const result = this.engine.handleAction(action)
   
     if (result && result.success) {
+      if (this.isAiAssistEnabled()) {
+        this.hintEdgeId = null
+      }
+
       this.animationManager.playEdge(action.edgeId, action.playerId)
   
       for (const cell of result.closedCells) {
@@ -276,6 +339,153 @@ export default class BattleScene extends BaseScene {
     })
   
     this.applyActionWithAnimation(action)
+  }
+
+  getRoomStateKey(roomState) {
+    if (!roomState) return ''
+
+    const edgeKey = (roomState.edges || [])
+      .map(item => {
+        const ownerId = this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+          ? this.onlineManager.toLocalGamePlayerId(item.ownerPlayerId)
+          : item.ownerPlayerId
+
+        return `${item.edgeId}:${ownerId}`
+      })
+      .sort()
+      .join(',')
+    const boxKey = (roomState.boxes || [])
+      .map(item => {
+        const ownerId = this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+          ? this.onlineManager.toLocalGamePlayerId(item.ownerPlayerId)
+          : item.ownerPlayerId
+
+        return `${item.boxId}:${ownerId}`
+      })
+      .sort()
+      .join(',')
+    const currentPlayerId = this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+      ? this.onlineManager.toLocalGamePlayerId(roomState.currentTurnPlayerId)
+      : roomState.currentTurnPlayerId
+
+    return [
+      roomState.phase || '',
+      currentPlayerId || '',
+      edgeKey,
+      boxKey
+    ].join('|')
+  }
+
+  getLocalStateKey() {
+    const edgeKey = Array.from(this.engine.board.edges.values())
+      .filter(edge => edge.ownerId)
+      .map(edge => `${edge.id}:${edge.ownerId}`)
+      .sort()
+      .join(',')
+    const boxKey = Array.from(this.engine.board.cells.values())
+      .filter(cell => cell.ownerId)
+      .map(cell => `${cell.id}:${cell.ownerId}`)
+      .sort()
+      .join(',')
+
+    return [
+      this.engine.status,
+      this.engine.getCurrentPlayerId(),
+      edgeKey,
+      boxKey
+    ].join('|')
+  }
+
+  applyAuthoritativeRoomState(roomState) {
+    if (this.mode !== 'online') return
+    if (!roomState || !Array.isArray(roomState.edges)) return
+
+    const key = this.getRoomStateKey(roomState)
+    if (!key || key === this.lastAppliedRoomStateKey) return
+    if (key === this.getLocalStateKey()) {
+      this.lastAppliedRoomStateKey = key
+      return
+    }
+
+    this.lastAppliedRoomStateKey = key
+    this.applyRoomStateToLocalGame(roomState)
+  }
+
+  applyRoomStateToLocalGame(roomState) {
+    if (!roomState) return
+
+    const edgeOwners = {}
+    const cellOwners = {}
+    const playerScores = { p1: 0, p2: 0 }
+
+    for (const item of roomState.edges || []) {
+      const localOwnerId = this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+        ? this.onlineManager.toLocalGamePlayerId(item.ownerPlayerId)
+        : item.ownerPlayerId
+
+      edgeOwners[item.edgeId] = localOwnerId
+    }
+
+    for (const item of roomState.boxes || []) {
+      const localOwnerId = this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+        ? this.onlineManager.toLocalGamePlayerId(item.ownerPlayerId)
+        : item.ownerPlayerId
+
+      cellOwners[item.boxId] = localOwnerId
+    }
+
+    for (const player of roomState.players || []) {
+      const localId = this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+        ? this.onlineManager.toLocalGamePlayerId(player.playerId)
+        : player.playerId
+
+      playerScores[localId] = roomState.scores && roomState.scores[player.playerId]
+        ? roomState.scores[player.playerId]
+        : 0
+    }
+
+    const currentLocalPlayerId = this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+      ? this.onlineManager.toLocalGamePlayerId(roomState.currentTurnPlayerId)
+      : roomState.currentTurnPlayerId
+    const currentIndex = this.engine.players.findIndex(player => player.id === currentLocalPlayerId)
+
+    this.restoreGameSnapshot({
+      edgeOwners,
+      cellOwners,
+      playerScores,
+      currentIndex: currentIndex >= 0 ? currentIndex : 0,
+      status: roomState.phase === 'finished' ? 'finished' : 'playing',
+      winnerId: this.getLocalWinnerIdFromRoomState(roomState),
+      resultRecorded: this.resultRecorded
+    })
+
+    this.lastAppliedRoomStateKey = this.getRoomStateKey(roomState)
+  }
+
+  getLocalWinnerIdFromRoomState(roomState) {
+    if (!roomState || roomState.phase !== 'finished' || !roomState.scores) return null
+
+    let winnerPlayerId = null
+    let bestScore = -1
+    let tie = false
+
+    for (const player of roomState.players || []) {
+      const score = roomState.scores[player.playerId] || 0
+
+      if (score > bestScore) {
+        winnerPlayerId = player.playerId
+        bestScore = score
+        tie = false
+      } else if (score === bestScore) {
+        tie = true
+      }
+    }
+
+    if (tie || !winnerPlayerId) return null
+
+    return this.onlineManager && typeof this.onlineManager.toLocalGamePlayerId === 'function'
+      ? this.onlineManager.toLocalGamePlayerId(winnerPlayerId)
+      : winnerPlayerId
   }
 
   applyOnlineRoomReset(payload) {
@@ -329,8 +539,8 @@ export default class BattleScene extends BaseScene {
 
   createBoardLayout() {
     const paddingX = 40
-    const topY = 110
-    const bottomPad = 110
+    const topY = this.safeLayout.insets.top + 210
+    const bottomPad = this.safeLayout.insets.bottom + 190
   
     const maxWidth = this.width - paddingX * 2
     const maxHeight = this.height - topY - bottomPad
@@ -378,9 +588,32 @@ export default class BattleScene extends BaseScene {
     }
   }
 
+  updateAssistButtonLayout() {
+    const buttonGap = 12
+    const y = this.height - this.safeLayout.bottom - this.undoButton.height
+
+    if (this.isAiAssistEnabled()) {
+      const totalWidth = this.undoButton.width + this.hintButton.width + buttonGap
+      const startX = (this.width - totalWidth) / 2
+
+      this.undoButton.x = startX
+      this.hintButton.x = startX + this.undoButton.width + buttonGap
+    } else {
+      this.undoButton.x = (this.width - this.undoButton.width) / 2
+      this.hintButton.x = this.undoButton.x
+    }
+
+    this.undoButton.y = y
+    this.hintButton.y = y
+  }
+
 
   isBackButtonHit(x, y) {
-    const b = this.backButton
+    return this.isButtonHit(this.backButton, x, y)
+  }
+
+  isButtonHit(button, x, y) {
+    const b = button
   
     return (
       x >= b.x &&
@@ -391,12 +624,36 @@ export default class BattleScene extends BaseScene {
   }
 
   onEnter() {
+    this.updateAssistButtonLayout()
     this.inputManager.clearTouchStartHandlers()
   
     this.inputManager.onTouchStart((x, y) => {
+      if (this.turnCoverVisible) {
+        this.hideTurnCover()
+        return
+      }
+
       if (this.isBackButtonHit(x, y)) {
         this.returnToMenu()
         return
+      }
+
+      if (this.canShowUndoButton()) {
+        if (this.isButtonHit(this.getUndoButton(), x, y)) {
+          if (this.mode === 'online') {
+            this.requestOnlineUndo()
+          } else {
+            this.undoPlayerMove()
+          }
+          return
+        }
+      }
+
+      if (this.isAiAssistEnabled()) {
+        if (this.isButtonHit(this.hintButton, x, y)) {
+          this.showHint()
+          return
+        }
       }
   
       const state = this.engine.getState()
@@ -459,12 +716,27 @@ export default class BattleScene extends BaseScene {
         playerId: this.engine.getCurrentPlayerId(),
         edgeId: edge.id
       })
+
+      const snapshot = this.shouldRecordUndoForAction(action)
+        ? this.createGameSnapshot()
+        : null
       
-      this.applyActionWithAnimation(action)
+      const result = this.applyActionWithAnimation(action)
+
+      if (snapshot && result && result.success) {
+        this.undoStack.push(snapshot)
+      }
+
+      this.showLocalTurnCoverAfterAction(result)
     })
   }
 
   onExit() {
+    if (this.aiThinkTimer) {
+      clearTimeout(this.aiThinkTimer)
+      this.aiThinkTimer = null
+    }
+    this.aiThinking = false
     this.inputManager.clearTouchStartHandlers()
   }
 
@@ -488,6 +760,17 @@ export default class BattleScene extends BaseScene {
   
     if (typeof this.onlineManager.requestRematch === 'function') {
       this.onlineManager.requestRematch()
+    }
+  }
+
+  requestOnlineUndo() {
+    if (!this.onlineManager || !this.canRequestOnlineUndo()) return
+
+    this.undoRequested = true
+    console.log('请求在线悔棋')
+
+    if (typeof this.onlineManager.requestUndo === 'function') {
+      this.onlineManager.requestUndo()
     }
   }
 
@@ -523,7 +806,8 @@ export default class BattleScene extends BaseScene {
   
     this.aiThinking = true
   
-    setTimeout(() => {
+    this.aiThinkTimer = setTimeout(() => {
+      this.aiThinkTimer = null
       const actionEdge = this.ai.getAction({
         board: this.engine.board,
         playerId: 'p2'
@@ -545,6 +829,184 @@ export default class BattleScene extends BaseScene {
     }, 300)
   }
 
+  isAiAssistEnabled() {
+    return this.mode === 'ai' && this.aiDifficulty !== 'inferno'
+  }
+
+  isLocalUndoEnabled() {
+    return this.mode === 'local_2p'
+  }
+
+  isOnlineUndoEnabled() {
+    return this.mode === 'online'
+  }
+
+  canShowUndoButton() {
+    return this.isAiAssistEnabled() || this.isLocalUndoEnabled() || this.isOnlineUndoEnabled()
+  }
+
+  getUndoButton() {
+    return this.undoButton
+  }
+
+  canUseAiAssist() {
+    const state = this.engine.getState()
+
+    return (
+      this.isAiAssistEnabled() &&
+      !this.aiThinking &&
+      state.status === 'playing' &&
+      state.currentPlayerId === 'p1'
+    )
+  }
+
+  canUndoPlayerMove() {
+    const state = this.engine.getState()
+
+    return (
+      this.canShowUndoButton() &&
+      !this.aiThinking &&
+      !this.turnCoverVisible &&
+      this.undoStack.length > 0 &&
+      (
+        this.isLocalUndoEnabled() ||
+        state.status === 'finished' ||
+        state.currentPlayerId === 'p1'
+      )
+    )
+  }
+
+  canRequestOnlineUndo() {
+    const state = this.engine.getState()
+    const roomState = this.onlineManager && this.onlineManager.roomState
+
+    return (
+      this.isOnlineUndoEnabled() &&
+      !this.roomPaused &&
+      !this.undoRequested &&
+      state.status === 'playing' &&
+      roomState &&
+      roomState.phase === 'playing' &&
+      roomState.canUndo === true
+    )
+  }
+
+  hasPendingOnlineUndoFromOpponent() {
+    if (!this.isOnlineUndoEnabled()) return false
+
+    const roomState = this.onlineManager && this.onlineManager.roomState
+    const votes = roomState && roomState.undoVotes ? roomState.undoVotes : []
+
+    return votes.length > 0 && votes.indexOf(this.onlineManager.playerId) < 0
+  }
+
+  updateOnlineUndoState(roomState) {
+    if (!this.isOnlineUndoEnabled() || !roomState) return
+
+    const votes = roomState.undoVotes || []
+    this.undoRequested = votes.indexOf(this.onlineManager.playerId) >= 0
+  }
+
+  shouldRecordUndoForAction(action) {
+    if (this.isLocalUndoEnabled()) {
+      return !!action && this.engine.getState().status === 'playing'
+    }
+
+    return (
+      this.isAiAssistEnabled() &&
+      action &&
+      action.playerId === 'p1' &&
+      this.engine.getCurrentPlayerId() === 'p1'
+    )
+  }
+
+  createGameSnapshot() {
+    const edgeOwners = {}
+    const cellOwners = {}
+    const playerScores = {}
+
+    for (const edge of this.engine.board.edges.values()) {
+      edgeOwners[edge.id] = edge.ownerId
+    }
+
+    for (const cell of this.engine.board.cells.values()) {
+      cellOwners[cell.id] = cell.ownerId
+    }
+
+    for (const player of this.engine.players) {
+      playerScores[player.id] = player.score
+    }
+
+    return {
+      edgeOwners,
+      cellOwners,
+      playerScores,
+      currentIndex: this.engine.turnManager.currentIndex,
+      status: this.engine.status,
+      winnerId: this.engine.winnerId,
+      resultRecorded: this.resultRecorded
+    }
+  }
+
+  restoreGameSnapshot(snapshot) {
+    if (!snapshot) return
+
+    for (const edge of this.engine.board.edges.values()) {
+      edge.ownerId = snapshot.edgeOwners[edge.id] || null
+    }
+
+    for (const cell of this.engine.board.cells.values()) {
+      cell.ownerId = snapshot.cellOwners[cell.id] || null
+    }
+
+    for (const player of this.engine.players) {
+      player.score = snapshot.playerScores[player.id] || 0
+    }
+
+    this.engine.turnManager.currentIndex = snapshot.currentIndex || 0
+    this.engine.status = snapshot.status || 'playing'
+    this.engine.winnerId = snapshot.winnerId || null
+    this.resultRecorded = !!snapshot.resultRecorded
+    this.animationManager = new AnimationManager()
+    this.hintEdgeId = null
+  }
+
+  undoPlayerMove() {
+    if (!this.canUndoPlayerMove()) return
+
+    const snapshot = this.undoStack.pop()
+    if (!snapshot) return
+
+    this.restoreGameSnapshot(snapshot)
+  }
+
+  showLocalTurnCoverAfterAction(result) {
+    if (!this.isLocalUndoEnabled()) return
+    if (!result || !result.success || result.extraTurn) return
+
+    const state = this.engine.getState()
+    if (!state || state.status !== 'playing') return
+
+    this.turnCoverVisible = true
+    this.turnCoverPlayerId = state.currentPlayerId
+  }
+
+  hideTurnCover() {
+    this.turnCoverVisible = false
+    this.turnCoverPlayerId = null
+  }
+
+  showHint() {
+    if (!this.canUseAiAssist()) return
+
+    const edge = this.ai.getAction({
+      board: this.engine.board,
+      playerId: 'p1'
+    })
+
+    this.hintEdgeId = edge && !edge.ownerId ? edge.id : null
+  }
+
   render() {
     this.ctx.fillStyle = '#EFEFEF'
     this.ctx.fillRect(0, 0, this.width, this.height)
@@ -554,7 +1016,8 @@ export default class BattleScene extends BaseScene {
       originX: this.layout.originX,
       originY: this.layout.originY,
       cellSize: this.layout.cellSize,
-      animationManager: this.animationManager
+      animationManager: this.animationManager,
+      highlightedEdgeId: this.hintEdgeId
     })
   
     const state = this.engine.getState()
@@ -562,6 +1025,7 @@ export default class BattleScene extends BaseScene {
     this.drawPlayerCard('p1', state, 'bottom')
   
     this.drawBackButton()
+    this.drawAssistButtons()
   
     if (state.status === 'finished') {
       this.gameOverPanel.draw(state, {
@@ -578,6 +1042,10 @@ export default class BattleScene extends BaseScene {
   
     if (this.mode === 'online' && this.roomPaused && state.status !== 'finished') {
       this.drawPauseTip()
+    }
+
+    if (this.turnCoverVisible) {
+      this.drawTurnCover()
     }
   }
 
@@ -596,8 +1064,8 @@ export default class BattleScene extends BaseScene {
       const cardH = 72
       const cardX = 20
       const cardY = position === 'top'
-        ? 120
-        : H - cardH - 120
+        ? this.safeLayout.insets.top + 120
+        : H - this.safeLayout.insets.bottom - cardH - 88
     
       const color = PLAYER_COLORS[playerId]
       const score = state.scores[playerId] ?? 0
@@ -614,7 +1082,7 @@ export default class BattleScene extends BaseScene {
       ctx.fillStyle = '#FFFFFF'
       ctx.fill()
     
-      // ── 当前回合：左侧彩色竖条高亮 ────────────────────────
+      // Highlight current turn.
       if (isCurrent) {
         this._roundRectLeft(ctx, cardX, cardY, 6, cardH, 14)
         ctx.fillStyle = color
@@ -641,7 +1109,7 @@ export default class BattleScene extends BaseScene {
       ctx.textBaseline = 'middle'
       ctx.fillText(name, nameX, nameY)
     
-      // ── “我”识别小标签：根据名字宽度动态定位 ───────────────
+      // Keep the local player tag beside the name.
       if (isMe) {
         const nameWidth = ctx.measureText(name).width
     
@@ -653,7 +1121,6 @@ export default class BattleScene extends BaseScene {
         const scoreSafeX = cardX + cardW - 90
     
         let tagX = nameX + nameWidth + tagGap
-        // 如果屏幕很窄，防止标签超到分数区域
         if (tagX + tagW > scoreSafeX) {
           tagX = scoreSafeX - tagW
         }
@@ -671,7 +1138,7 @@ export default class BattleScene extends BaseScene {
         ctx.fillText('\u6211', tagX + tagW / 2, tagY + tagH / 2 + 1)
       }
     
-      // ── “当前回合”标签 ────────────────────────────────────
+      // Current turn label.
       if (isCurrent) {
         ctx.fillStyle = color
         ctx.font = '13px Arial'
@@ -690,7 +1157,7 @@ export default class BattleScene extends BaseScene {
       ctx.fillStyle = '#999999'
       ctx.fillText(`/ ${total}`, cardX + cardW - 18, cardY + cardH / 2)
     
-      // ── 进度条 ────────────────────────────────────────────
+      // Score progress bar.
       const barX = cardX + 58
       const barY = cardY + cardH - 12
       const barW = cardW - 58 - 20
@@ -766,8 +1233,72 @@ export default class BattleScene extends BaseScene {
   ctx.font = 'bold 15px Arial'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText('← 返回', b.x + b.width / 2 + 3, b.y + b.height / 2)
+  ctx.fillText('\u2190 \u8fd4\u56de', b.x + b.width / 2 + 3, b.y + b.height / 2)
 
   ctx.restore()
 }
+
+  drawAssistButtons() {
+    if (!this.canShowUndoButton()) return
+    this.updateAssistButtonLayout()
+
+    const undoEnabled = this.isOnlineUndoEnabled()
+      ? this.canRequestOnlineUndo()
+      : this.canUndoPlayerMove()
+    const undoText = this.isOnlineUndoEnabled() && this.undoRequested
+      ? '\u7b49\u5f85\u540c\u610f'
+      : this.hasPendingOnlineUndoFromOpponent()
+        ? '\u540c\u610f\u6094\u68cb'
+        : '\u6094\u68cb'
+
+    this.drawAssistButton(this.getUndoButton(), undoText, undoEnabled)
+
+    if (this.isAiAssistEnabled()) {
+      this.drawAssistButton(this.hintButton, '\u63d0\u793a', this.canUseAiAssist())
+    }
+  }
+
+  drawAssistButton(button, text, enabled) {
+    const ctx = this.ctx
+
+    ctx.save()
+
+    this._roundRect(ctx, button.x, button.y, button.width, button.height, 10)
+    ctx.fillStyle = enabled ? '#FFFFFF' : 'rgba(255, 255, 255, 0.65)'
+    ctx.fill()
+
+    this._roundRectLeft(ctx, button.x, button.y, 5, button.height, 10)
+    ctx.fillStyle = enabled ? '#F5A623' : '#BDBDBD'
+    ctx.fill()
+
+    ctx.fillStyle = enabled ? '#444444' : '#999999'
+    ctx.font = 'bold 15px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, button.x + button.width / 2 + 2, button.y + button.height / 2)
+
+    ctx.restore()
+  }
+
+  drawTurnCover() {
+    const ctx = this.ctx
+    const playerId = this.turnCoverPlayerId || this.engine.getCurrentPlayerId()
+    const playerName = this.getPlayerDisplayName(playerId)
+
+    ctx.save()
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
+    ctx.fillRect(0, 0, this.width, this.height)
+
+    ctx.fillStyle = '#FFFFFF'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+
+    ctx.font = 'bold 28px Arial'
+    ctx.fillText(`\u5207\u6362\u5230${playerName}`, this.width / 2, this.height / 2 - 24)
+
+    ctx.font = '18px Arial'
+    ctx.fillText('\u70b9\u51fb\u4efb\u610f\u5904\u7ee7\u7eed', this.width / 2, this.height / 2 + 24)
+    ctx.restore()
+  }
 }

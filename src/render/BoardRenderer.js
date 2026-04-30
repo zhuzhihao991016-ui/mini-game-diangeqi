@@ -3,19 +3,19 @@ export default class BoardRenderer {
     this.ctx = ctx
   }
 
-  draw({ board, originX, originY, cellSize, animationManager }) {
+  draw({ board, originX, originY, cellSize, animationManager, highlightedEdgeId = null }) {
     if (board.type === 'hex') {
-      this.drawHex(board, originX, originY, cellSize, animationManager)
+      this.drawHex(board, originX, originY, cellSize, animationManager, highlightedEdgeId)
     } else {
       this.drawCells({ board, originX, originY, cellSize, animationManager })
-      this.drawEdges({ board, originX, originY, cellSize, animationManager })
+      this.drawEdges({ board, originX, originY, cellSize, animationManager, highlightedEdgeId })
       this.drawPoints({ board, originX, originY, cellSize })
     }
   }
 
-drawHex(board, originX, originY, size, animationManager) {
+drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = null) {
   this.drawHexCells(board, originX, originY, size, animationManager)
-  this.drawHexEdges(board, originX, originY, size, animationManager)
+  this.drawHexEdges(board, originX, originY, size, animationManager, highlightedEdgeId)
   this.drawHexPoints(board, originX, originY, size)
 }
 
@@ -59,12 +59,16 @@ drawHex(board, originX, originY, size, animationManager) {
     ctx.restore()
   }
 
-  drawEdges({ board, originX, originY, cellSize, animationManager }) {
+  drawEdges({ board, originX, originY, cellSize, animationManager, highlightedEdgeId = null }) {
     for (const edge of board.edges.values()) {
       const line = this.getEdgeLine(edge, originX, originY, cellSize)
 
       if (!edge.ownerId) {
-        this.drawEmptyEdge(line)
+        if (edge.id === highlightedEdgeId) {
+          this.drawHighlightedEdge(line)
+        } else {
+          this.drawEmptyEdge(line)
+        }
         continue
       }
 
@@ -87,6 +91,24 @@ drawHex(board, originX, originY, size, animationManager) {
     ctx.moveTo(line.x1, line.y1)
     ctx.lineTo(line.x2, line.y2)
     ctx.stroke()
+  }
+
+  drawHighlightedEdge(line) {
+    const ctx = this.ctx
+
+    ctx.save()
+    ctx.strokeStyle = '#F5A623'
+    ctx.lineWidth = 8
+    ctx.lineCap = 'round'
+    ctx.shadowColor = 'rgba(245, 166, 35, 0.55)'
+    ctx.shadowBlur = 10
+
+    ctx.beginPath()
+    ctx.moveTo(line.x1, line.y1)
+    ctx.lineTo(line.x2, line.y2)
+    ctx.stroke()
+
+    ctx.restore()
   }
 
   drawClaimedEdge(line, playerId, progress) {
@@ -174,14 +196,18 @@ drawHex(board, originX, originY, size, animationManager) {
     return corners
   }
 
-  drawHexEdges(board, originX, originY, size, animationManager) {
+  drawHexEdges(board, originX, originY, size, animationManager, highlightedEdgeId = null) {
     for (const edge of board.edges.values()) {
       const line = this.getHexEdgeLine(edge, originX, originY, size)
   
       if (!line) continue
   
       if (!edge.ownerId) {
-        this.drawEmptyEdge(line)
+        if (edge.id === highlightedEdgeId) {
+          this.drawHighlightedEdge(line)
+        } else {
+          this.drawEmptyEdge(line)
+        }
         continue
       }
   

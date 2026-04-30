@@ -2,6 +2,7 @@
 import BattleScene from './BattleScene'
 import TutorialScene from './TutorialScene'
 import OnlineRoomScene from './OnlineRoomScene'
+import { getSceneSafeLayout } from '../utils/SafeArea'
 
 const BRAND_COLOR = '#4A90E2'
 const DANGER_COLOR = '#E24A4A'
@@ -63,6 +64,15 @@ export default class MenuScene extends BaseScene {
     this.toastText = ''
     this.toastTimer = 0
     this.leaderboardLoading = false
+    this.safeLayout = getSceneSafeLayout(this.width, this.height)
+  }
+
+  y(value) {
+    return value + this.safeLayout.insets.top
+  }
+
+  bottomY(offset) {
+    return this.height - this.safeLayout.insets.bottom - offset
   }
 
   onEnter() {
@@ -109,12 +119,12 @@ export default class MenuScene extends BaseScene {
     const w = this.width - 40
     const h = 54
 
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 300, width: w, height: h, text: T.start, accentColor: BRAND_COLOR, onClick: () => this.buildModeButtons() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 368, width: w, height: h, text: T.editName, accentColor: BRAND_COLOR, onClick: () => this.changeNickname() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 436, width: w, height: h, text: T.leaderboard, accentColor: BRAND_COLOR, onClick: () => this.buildLeaderboardButtons() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(300), width: w, height: h, text: T.start, accentColor: BRAND_COLOR, onClick: () => this.buildModeButtons() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(368), width: w, height: h, text: T.editName, accentColor: BRAND_COLOR, onClick: () => this.changeNickname() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(436), width: w, height: h, text: T.leaderboard, accentColor: BRAND_COLOR, onClick: () => this.buildLeaderboardButtons() }))
     this.buttons.push(this.createCard({
       x: cx - w / 2,
-      y: 504,
+      y: this.y(504),
       width: w,
       height: h,
       text: T.tutorial,
@@ -153,9 +163,9 @@ export default class MenuScene extends BaseScene {
     const w = this.width - 40
     const h = 58
 
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 195, width: w, height: h, text: T.aiMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'ai'; this.buildDifficultyButtons() } }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 268, width: w, height: h, text: T.onlineMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'online'; this.selectedBoardType = 'square'; this.buildSquareSizeButtons() } }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 341, width: w, height: h, text: T.localMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'local_2p'; this.buildBoardButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195), width: w, height: h, text: T.aiMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'ai'; this.buildDifficultyButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(268), width: w, height: h, text: T.onlineMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'online'; this.selectedBoardType = 'square'; this.buildSquareSizeButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(341), width: w, height: h, text: T.localMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'local_2p'; this.buildBoardButtons() } }))
     this.buttons.push(this.createBackCard(() => this.buildHomeButtons()))
   }
 
@@ -172,7 +182,7 @@ export default class MenuScene extends BaseScene {
     ]
 
     difficulties.forEach((item, index) => {
-      this.buttons.push(this.createCard({ x: cx - w / 2, y: 195 + index * 73, width: w, height: h, text: item.text, accentColor: BRAND_COLOR, onClick: () => { this.selectedAiDifficulty = item.value; this.buildBoardButtons() } }))
+      this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195 + index * 73), width: w, height: h, text: item.text, accentColor: BRAND_COLOR, onClick: () => { this.selectedAiDifficulty = item.value; this.buildBoardButtons() } }))
     })
     this.buttons.push(this.createBackCard(() => this.buildModeButtons()))
   }
@@ -184,8 +194,8 @@ export default class MenuScene extends BaseScene {
     const w = this.width - 40
     const h = 58
 
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 195, width: w, height: h, text: T.square, accentColor: BRAND_COLOR, onClick: () => { this.selectedBoardType = 'square'; this.buildSquareSizeButtons() } }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 268, width: w, height: h, text: T.hex, accentColor: BRAND_COLOR, onClick: () => { this.selectedBoardType = 'hex'; this.startHexGame() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195), width: w, height: h, text: T.square, accentColor: BRAND_COLOR, onClick: () => { this.selectedBoardType = 'square'; this.buildSquareSizeButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(268), width: w, height: h, text: T.hex, accentColor: BRAND_COLOR, onClick: () => { this.selectedBoardType = 'hex'; this.startHexGame() } }))
     this.buttons.push(this.createBackCard(() => {
       if (this.selectedMode === 'ai') {
         this.buildDifficultyButtons()
@@ -209,7 +219,7 @@ export default class MenuScene extends BaseScene {
 
     if (this.selectedMode === 'online') sizes.splice(2)
     sizes.forEach((item, index) => {
-      this.buttons.push(this.createCard({ x: cx - w / 2, y: 195 + index * 73, width: w, height: h, text: item.text, accentColor: BRAND_COLOR, onClick: () => this.startGame(item.rows, item.cols) }))
+      this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195 + index * 73), width: w, height: h, text: item.text, accentColor: BRAND_COLOR, onClick: () => this.startGame(item.rows, item.cols) }))
     })
     this.buttons.push(this.createBackCard(() => this.selectedMode === 'online' ? this.buildModeButtons() : this.buildBoardButtons()))
   }
@@ -287,7 +297,7 @@ export default class MenuScene extends BaseScene {
     const cardW = this.width - 40
     const cardH = 90
     const cardX = 20
-    const cardY = 70
+    const cardY = this.y(70)
 
     this.roundRect(ctx, cardX, cardY, cardW, cardH, 5)
     ctx.fillStyle = '#FFFFFF'
@@ -311,13 +321,13 @@ export default class MenuScene extends BaseScene {
     this.ctx.font = '14px Arial'
     this.ctx.textAlign = 'center'
     this.ctx.textBaseline = 'middle'
-    this.ctx.fillText(subtitleMap[this.page] || '', this.width / 2, 180)
+    this.ctx.fillText(subtitleMap[this.page] || '', this.width / 2, this.y(180))
   }
 
   drawUserPanel() {
     const ctx = this.ctx
     const x = 20
-    const y = 205
+    const y = this.y(205)
     const w = this.width - 40
     const h = 72
     const profile = this.userManager ? this.userManager.profile : null
@@ -343,9 +353,9 @@ export default class MenuScene extends BaseScene {
   drawLeaderboard() {
     const ctx = this.ctx
     const x = 20
-    const y = 210
+    const y = this.y(210)
     const w = this.width - 40
-    const h = Math.min(390, this.height - 320)
+    const h = Math.min(390, this.bottomY(110) - y)
     const records = this.leaderboardManager && this.leaderboardManager.getRecords
       ? this.leaderboardManager.getRecords(8)
       : []
@@ -415,7 +425,7 @@ export default class MenuScene extends BaseScene {
     const tw = 260
     const th = 46
     const tx = (this.width - tw) / 2
-    const ty = this.height - 130
+    const ty = this.bottomY(106)
     this.roundRect(ctx, tx, ty, tw, th, 10)
     ctx.fillStyle = 'rgba(34,34,34,0.88)'
     ctx.fill()
@@ -453,7 +463,7 @@ export default class MenuScene extends BaseScene {
   }
 
   createBackCard(onClick) {
-    return this.createCard({ x: 20, y: this.height - 90, width: 110, height: 40, text: T.back, accentColor: DANGER_COLOR, onClick })
+    return this.createCard({ x: 20, y: this.bottomY(66), width: 110, height: 40, text: T.back, accentColor: DANGER_COLOR, onClick })
   }
 
   roundRect(ctx, x, y, w, h, r) {

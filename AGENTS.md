@@ -82,3 +82,21 @@
 - 不要在没有确认服务端协议的情况下修改 `MessageType`、房间状态字段或边 ID 格式。
 - 不要把根目录 `project.private.config.json` 中的本地配置当成通用团队配置。
 - 如果需要做大改动，优先先建立最小可运行检查或规则测试，避免 Canvas/UI 问题掩盖核心规则回归。
+## 微信开发者工具 CLI
+
+- 本机微信开发者工具 CLI 路径：`E:\Program Files\微信小程序\微信web开发者工具\cli.bat`。
+- PowerShell 中调用时必须给路径加引号，并用调用运算符：`& "E:\Program Files\微信小程序\微信web开发者工具\cli.bat" --lang zh -h`。
+- 不确定参数时先查帮助：`cli.bat -h` 或 `cli.bat --lang zh -h`；子命令也可以查帮助，例如 `preview --lang zh -h`。
+- 常用命令：
+  - `login` / `islogin`：登录和检查登录状态。
+  - `open --project <项目路径>`：打开工具或指定项目。
+  - `preview --project <项目路径>`：生成预览二维码，可配合 `--qr-format`、`--qr-output`、`--result-output`、`--info-output`、`--debug`。
+  - `auto-preview`：自动预览并获取信息。
+  - `upload -v <版本号> --project <项目路径>`：上传项目代码；只有用户明确要求上传时才执行。
+  - `build-npm`：构建小程序 npm。
+  - `auto` / `auto-replay`：自动化能力和回放窗口。
+  - `close` / `quit`：关闭项目窗口或退出 IDE；执行前需确认用户意图。
+  - `cache` / `reset-fileutils`：清理工具缓存或重置文件工具；清理大范围缓存前需确认。
+  - `cloud env list`、`cloud functions list/info/deploy/inc-deploy/download`：云开发相关操作；部署类命令需用户明确授权。
+- 本项目如需通过 IDE 口径验证编译，优先尝试 `preview --project "C:\Users\zhuzh\WeChatProjects\minigame-1" --debug` 并读取输出；若 CLI 要求登录或打开 IDE，按报错继续处理。
+- 当前机器上曾观察到 `cli.bat --lang zh -h` 启动后抛出 `EEXIST: file already exists, mkdir 'C:\Users\zhuzh\AppData\Local\微信开发者工具'`。这属于本地 CLI/工具状态问题，不应当成项目编译错误；不要为规避该问题递归删除微信开发者工具本地目录或缓存，需用户明确确认后再处理。

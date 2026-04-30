@@ -1,6 +1,7 @@
 import BaseScene from './BaseScene'
 import MenuScene from './MenuScene'
 import BattleScene from './BattleScene'
+import { getSceneSafeLayout } from '../utils/SafeArea'
 
 const BRAND_COLOR = '#4A90E2'
 const DANGER_COLOR = '#E24A4A'
@@ -81,7 +82,13 @@ export default class OnlineRoomScene extends BaseScene {
     this.onlineEventsBound = false
     this.active = true
     this.enteredBattle = false
-    this.backButton = { x: 20, y: 20, width: 110, height: 40 }
+    this.readySentForRoomId = ''
+    this.safeLayout = getSceneSafeLayout(this.width, this.height)
+    this.backButton = { x: 20, y: this.safeLayout.top, width: 110, height: 40 }
+  }
+
+  y(value) {
+    return value + this.safeLayout.insets.top
   }
 
   onEnter() {
@@ -160,8 +167,8 @@ export default class OnlineRoomScene extends BaseScene {
     const cx = this.width / 2
     const w = this.width - 40
     const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 230, width: w, height: h, text: T.createFriend, accentColor: BRAND_COLOR, onClick: () => this.createFriendRoom() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 305, width: w, height: h, text: T.joinFriend, accentColor: BRAND_COLOR, onClick: () => this.showJoinInput() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(230), width: w, height: h, text: T.createFriend, accentColor: BRAND_COLOR, onClick: () => this.createFriendRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(305), width: w, height: h, text: T.joinFriend, accentColor: BRAND_COLOR, onClick: () => this.showJoinInput() }))
   }
 
   showInviteJoinButtons() {
@@ -169,8 +176,8 @@ export default class OnlineRoomScene extends BaseScene {
     const cx = this.width / 2
     const w = this.width - 40
     const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 300, width: w, height: h, text: T.joinFriend, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 375, width: w, height: h, text: T.back, accentColor: DANGER_COLOR, onClick: () => this.buildHomeButtons() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(300), width: w, height: h, text: T.joinFriend, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(375), width: w, height: h, text: T.back, accentColor: DANGER_COLOR, onClick: () => this.buildHomeButtons() }))
   }
 
   async createFriendRoom() {
@@ -203,8 +210,8 @@ export default class OnlineRoomScene extends BaseScene {
     const cx = this.width / 2
     const w = this.width - 40
     const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 260, width: w, height: h, text: T.inputRoomId, accentColor: BRAND_COLOR, onClick: () => this.promptRoomId() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 335, width: w, height: h, text: T.joinRoom, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(260), width: w, height: h, text: T.inputRoomId, accentColor: BRAND_COLOR, onClick: () => this.promptRoomId() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(335), width: w, height: h, text: T.joinRoom, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
   }
 
   promptRoomId() {
@@ -253,9 +260,9 @@ export default class OnlineRoomScene extends BaseScene {
     const cx = this.width / 2
     const w = this.width - 40
     const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 300, width: w, height: h, text: T.share, accentColor: BRAND_COLOR, onClick: () => this.shareRoom() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 375, width: w, height: h, text: T.copy, accentColor: BRAND_COLOR, onClick: () => this.copyRoomId() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: 450, width: w, height: h, text: T.cancel, accentColor: DANGER_COLOR, onClick: () => this.cancelRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(300), width: w, height: h, text: T.share, accentColor: BRAND_COLOR, onClick: () => this.shareRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(375), width: w, height: h, text: T.copy, accentColor: BRAND_COLOR, onClick: () => this.copyRoomId() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(450), width: w, height: h, text: T.cancel, accentColor: DANGER_COLOR, onClick: () => this.cancelRoom() }))
   }
 
   shareRoom() {
@@ -294,6 +301,7 @@ export default class OnlineRoomScene extends BaseScene {
         const players = roomState.players || []
         this.statusText = players.length >= 2 ? T.preparing : T.created
         if (this.page === 'waiting') this.buildWaitingButtons()
+        if (players.length >= 2) this.tryEnterBattle()
       }
       if (roomState.phase === 'playing') this.tryEnterBattle()
       if (roomState.phase === 'finished') this.statusText = T.finished
@@ -355,6 +363,8 @@ export default class OnlineRoomScene extends BaseScene {
     }
     if (roomInfo.phase !== 'waiting') return
     this.statusText = T.preparing
+    if (this.readySentForRoomId === roomInfo.roomId) return
+    this.readySentForRoomId = roomInfo.roomId
     this.onlineManager.startFrameSync()
   }
 
@@ -421,7 +431,7 @@ export default class OnlineRoomScene extends BaseScene {
     ctx.font = 'bold 28px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(T.title, this.width / 2, 120)
+    ctx.fillText(T.title, this.width / 2, this.y(120))
   }
 
   drawStatus() {
@@ -430,7 +440,7 @@ export default class OnlineRoomScene extends BaseScene {
     ctx.font = '15px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(this.statusText, this.width / 2, 175)
+    ctx.fillText(this.statusText, this.width / 2, this.y(175))
   }
 
   drawRoomInfo() {
@@ -440,7 +450,7 @@ export default class OnlineRoomScene extends BaseScene {
     ctx.font = 'bold 18px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(this.roomId ? `${T.roomIdLabel}${this.roomId}` : `${T.joiningLabel}${this.inputRoomId}`, this.width / 2, 215)
+    ctx.fillText(this.roomId ? `${T.roomIdLabel}${this.roomId}` : `${T.joiningLabel}${this.inputRoomId}`, this.width / 2, this.y(215))
   }
 
   drawBackButton() {

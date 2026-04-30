@@ -521,6 +521,8 @@ function serializeRoom(room) {
     pauseReason: room.pauseReason || '',
     roundIndex: room.roundIndex || 1,
     rematchVotes: Array.from(room.rematchVotes || []),
+    undoVotes: Array.from(room.undoVotes || []),
+    canUndo: Array.isArray(room.history) && room.history.length > 0,
     players: room.players.map(player => ({
       playerId: player.playerId,
       nickname: player.nickname,
@@ -544,6 +546,28 @@ function serializeRoom(room) {
       cols: DEFAULT_BOARD_COLS
     }
   }
+}
+
+function createRoomSnapshot(room) {
+  return {
+    phase: room.phase,
+    currentTurnPlayerId: room.currentTurnPlayerId,
+    edges: Array.from(room.edges.entries()),
+    boxes: Array.from(room.boxes.entries()),
+    scores: { ...room.scores }
+  }
+}
+
+function restoreRoomSnapshot(room, snapshot) {
+  if (!room || !snapshot) return
+
+  room.phase = snapshot.phase || 'playing'
+  room.currentTurnPlayerId = snapshot.currentTurnPlayerId
+  room.edges = new Map(snapshot.edges || [])
+  room.boxes = new Map(snapshot.boxes || [])
+  room.scores = { ...(snapshot.scores || {}) }
+  room.undoVotes = new Set()
+  room.updatedAt = Date.now()
 }
 
 function broadcastRoomState(room) {
@@ -603,7 +627,7 @@ function parseEdgeId(room, edgeId) {
 }
 
 function cellId(row, col) {
-  return `c_${row}_${col}`
+  return `c_${col}_${row}`
 }
 
 function hasEdge(room, edgeId) {
@@ -894,6 +918,8 @@ function handleCreateRoom(ws, payload) {
     },
     board,
     rematchVotes: new Set(),
+    undoVotes: new Set(),
+    history: [],
     roundIndex: 1,
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -965,6 +991,7 @@ function handleJoinRoom(ws, payload) {
   room.players.push(player)
   room.scores[player.playerId] = 0
   room.rematchVotes = new Set()
+  room.undoVotes = new Set()
   room.updatedAt = Date.now()
   client.roomId = roomId
 
@@ -1025,6 +1052,8 @@ function handlePlayerReady(ws, payload) {
   if (allReady) {
     room.phase = 'playing'
     room.rematchVotes = new Set()
+    room.undoVotes = new Set()
+    room.history = []
     room.currentTurnPlayerId = room.players[0].playerId
     room.updatedAt = Date.now()
   }
@@ -1069,6 +1098,13 @@ function handleClaimEdge(ws, payload) {
     sendError(ws, '这条边已经被占用', 'EDGE_ALREADY_CLAIMED')
     return
   }
+
+  if (!Array.isArray(room.history)) {
+    room.history = []
+  }
+
+  room.history.push(createRoomSnapshot(room))
+  room.undoVotes = new Set()
 
   room.edges.set(edgeId, client.playerId)
 
@@ -1119,6 +1155,8 @@ function resetRoomForRematch(room) {
   }
 
   room.rematchVotes = new Set()
+  room.undoVotes = new Set()
+  room.history = []
   room.roundIndex = (room.roundIndex || 1) + 1
 
   const onlinePlayers = room.players.filter(player => player.online)
@@ -1204,6 +1242,69 @@ function handleRematchRequest(ws, payload) {
   broadcastRoomState(room)
 }
 
+function handleUndoRequest(ws, payload) {
+  const client = getClient(ws)
+  const room = getRoom(payload.roomId)
+
+  if (!client || !room) {
+    sendError(ws, '房间不存在', 'ROOM_NOT_FOUND')
+    return
+  }
+
+  const player = findPlayer(room, client.playerId)
+
+  if (!player || !player.online) {
+    sendError(ws, '你不在该房间中', 'NOT_IN_ROOM')
+    return
+  }
+
+  if (room.phase !== 'playing') {
+    sendError(ws, '当前不能悔棋', 'UNDO_NOT_ALLOWED')
+    return
+  }
+
+  if (!Array.isArray(room.history) || room.history.length === 0) {
+    sendError(ws, '没有可悔棋的步骤', 'UNDO_NOT_ALLOWED')
+    return
+  }
+
+  if (!room.undoVotes) {
+    room.undoVotes = new Set()
+  }
+
+  room.undoVotes.add(client.playerId)
+  room.updatedAt = Date.now()
+
+  const onlinePlayers = room.players.filter(item => item.online)
+
+  broadcastRoom(room, 'UNDO_VOTE', {
+    roomId: room.roomId,
+    playerId: client.playerId,
+    votes: Array.from(room.undoVotes),
+    required: onlinePlayers.length
+  })
+
+  broadcastRoomState(room)
+
+  const allOnlinePlayersVoted = onlinePlayers.length >= 2 &&
+    onlinePlayers.every(item => room.undoVotes.has(item.playerId))
+
+  if (!allOnlinePlayersVoted) {
+    return
+  }
+
+  const snapshot = room.history.pop()
+  restoreRoomSnapshot(room, snapshot)
+
+  broadcastRoom(room, 'ROOM_UNDO', {
+    roomId: room.roomId,
+    currentTurnPlayerId: room.currentTurnPlayerId,
+    roomState: serializeRoom(room)
+  })
+
+  broadcastRoomState(room)
+}
+
 function handleLeaveRoom(ws, payload) {
   const client = getClient(ws)
   if (!client) return
@@ -1257,6 +1358,10 @@ function handleMessage(ws, raw) {
 
     case 'REMATCH_REQUEST':
       handleRematchRequest(ws, payload)
+      break
+
+    case 'UNDO_REQUEST':
+      handleUndoRequest(ws, payload)
       break
 
     case 'LEAVE_ROOM':

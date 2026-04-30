@@ -1,0 +1,36 @@
+export function getSafeAreaInsets(width = 0, height = 0) {
+  let info = null
+
+  if (typeof wx !== 'undefined') {
+    if (wx.getWindowInfo) {
+      info = wx.getWindowInfo()
+    } else if (wx.getSystemInfoSync) {
+      info = wx.getSystemInfoSync()
+    }
+  }
+
+  const windowWidth = (info && (info.windowWidth || info.screenWidth)) || width
+  const windowHeight = (info && (info.windowHeight || info.screenHeight)) || height
+  const safeArea = info && info.safeArea
+
+  if (!safeArea) {
+    return { top: 0, right: 0, bottom: 0, left: 0 }
+  }
+
+  return {
+    top: Math.max(0, safeArea.top || 0),
+    right: Math.max(0, windowWidth - safeArea.right),
+    bottom: Math.max(0, windowHeight - safeArea.bottom),
+    left: Math.max(0, safeArea.left || 0)
+  }
+}
+
+export function getSceneSafeLayout(width, height) {
+  const insets = getSafeAreaInsets(width, height)
+
+  return {
+    insets,
+    top: insets.top + 18,
+    bottom: insets.bottom + 24
+  }
+}

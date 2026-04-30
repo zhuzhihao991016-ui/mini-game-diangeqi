@@ -1,6 +1,7 @@
 import BaseScene from './BaseScene'
 import BattleScene from './BattleScene'
 import MenuScene from './MenuScene'
+import { getSceneSafeLayout } from '../utils/SafeArea'
 
 export default class OnlineMatchScene extends BaseScene {
   constructor({
@@ -32,12 +33,18 @@ export default class OnlineMatchScene extends BaseScene {
     this.roomId = null
     this.onlineManager = null
 
+    this.safeLayout = getSceneSafeLayout(this.width, this.height)
+
     this.backButton = {
       x: 20,
-      y: 20,
+      y: this.safeLayout.top,
       width: 120,
       height: 44
     }
+  }
+
+  y(value) {
+    return value + this.safeLayout.insets.top
   }
 
   onEnter() {
@@ -136,15 +143,15 @@ export default class OnlineMatchScene extends BaseScene {
     ctx.font = 'bold 26px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('联网对战', this.width / 2, 150)
+    ctx.fillText('联网对战', this.width / 2, this.y(150))
 
     ctx.fillStyle = '#777'
     ctx.font = '16px Arial'
-    ctx.fillText(this.statusText, this.width / 2, 220)
+    ctx.fillText(this.statusText, this.width / 2, this.y(220))
 
     if (this.roomId) {
       ctx.font = '13px Arial'
-      ctx.fillText(`房间ID：${this.roomId}`, this.width / 2, 255)
+      ctx.fillText(`房间ID：${this.roomId}`, this.width / 2, this.y(255))
     }
 
     this.drawBackButton()

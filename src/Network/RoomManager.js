@@ -91,6 +91,16 @@ export default class RoomManager extends EventEmitter {
       this.emit(MessageType.REMATCH_VOTE, payload)
       this.emit('rematchVote', payload)
     })
+
+    this.netManager.on(MessageType.UNDO_VOTE, payload => {
+      this.emit(MessageType.UNDO_VOTE, payload)
+      this.emit('undoVote', payload)
+    })
+
+    this.netManager.on(MessageType.ROOM_UNDO, payload => {
+      this.emit(MessageType.ROOM_UNDO, payload)
+      this.emit('roomUndo', payload)
+    })
     
     this.netManager.on(MessageType.ROOM_RESET, payload => {
       this.emit(MessageType.ROOM_RESET, payload)
@@ -193,6 +203,7 @@ export default class RoomManager extends EventEmitter {
   }
 
   createRoom(options = {}) {
+    const waiter = this.waitFor(MessageType.ROOM_CREATED)
     const nickname = options.nickname || '玩家1'
 
     this.netManager.send(MessageType.CREATE_ROOM, {
@@ -202,10 +213,11 @@ export default class RoomManager extends EventEmitter {
       cols: options.cols || 3
     })
 
-    return this.waitFor(MessageType.ROOM_CREATED)
+    return waiter
   }
 
   joinRoom(options = {}) {
+    const waiter = this.waitFor(MessageType.ROOM_JOINED)
     const roomId = String(options.roomId || '')
     const nickname = options.nickname || '玩家2'
 
@@ -214,7 +226,7 @@ export default class RoomManager extends EventEmitter {
       nickname
     })
 
-    return this.waitFor(MessageType.ROOM_JOINED)
+    return waiter
   }
 
   ready() {
@@ -265,6 +277,17 @@ export default class RoomManager extends EventEmitter {
     })
   }
 
+  requestUndo() {
+    if (!this.roomId) {
+      console.warn('当前没有房间，无法 requestUndo')
+      return
+    }
+
+    this.netManager.send(MessageType.UNDO_REQUEST, {
+      roomId: this.roomId
+    })
+  }
+
   leaveRoom() {
     if (!this.roomId) return
 
@@ -287,6 +310,14 @@ export default class RoomManager extends EventEmitter {
 
   onRematchVote(callback) {
     return this.on('rematchVote', callback)
+  }
+
+  onUndoVote(callback) {
+    return this.on('undoVote', callback)
+  }
+
+  onRoomUndo(callback) {
+    return this.on('roomUndo', callback)
   }
   
   onRoomReset(callback) {

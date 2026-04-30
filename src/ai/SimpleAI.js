@@ -161,55 +161,118 @@ export default class SimpleAI {
   getInfernoAction({ board, playerId }) {
     this.searchTimedOut = false
 
-    const scoringEdges = this.getScoringEdges(board)
-    const openEdges = this.getOpenEdges(board)
+    const position = this.analyzeInfernoPosition(board)
+    const scoringEdges = position.scoringEdges
+    const openEdges = position.openEdges
+
+    if (position.isControlPhase) {
+      if (scoringEdges.length > 0) {
+        return this.pickBestByScore(scoringEdges, edge => (
+          this.evaluateControlScoringMove(board, edge, position)
+        ))
+      }
+
+      const controlMove = this.getControlChainAction(board, position)
+      return controlMove ? controlMove.edge : this.getFallbackInfernoAction(board, playerId, position)
+    }
 
     if (scoringEdges.length > 0) {
-      return this.pickBestByScore(scoringEdges, edge => {
-        const sim = this.createSimulation(board)
-        const closedCount = this.claimEdgeInSimulation(board, sim, edge.id).length
+      const bestScoring = this.pickBestWithScore(scoringEdges, edge => (
+        this.evaluateScoringMoveAftermath(board, edge)
+      ))
+      const controlCandidate = this.getControlChainAction(board, position, { preferNonScoring: true })
 
-        return closedCount * 100 + this.countForcedChainClosures(board, sim)
-      })
+      if (controlCandidate && controlCandidate.score > bestScoring.score) {
+        return controlCandidate.edge
+      }
+
+      return bestScoring.edge
     }
 
-    if (this.shouldUseFastInfernoStrategy(board, openEdges.length)) {
-      return this.getFastInfernoAction(board)
+    if (position.safeEdges.length > 0) {
+      if (openEdges.length > this.getSearchOpenEdgeLimit(board)) {
+        return this.getFastInfernoAction(board, position)
+      }
+
+      const searchMove = this.getMinimaxAction(board, playerId, position)
+      if (searchMove) return searchMove
+
+      return this.getFastInfernoAction(board, position)
     }
 
-    const endgameMove = this.getEndgameChainAction(board)
-
-    if (endgameMove) {
-      return endgameMove
-    }
-
-    const searchMove = this.getMinimaxAction(board, playerId)
-
-    if (searchMove) {
-      return searchMove
-    }
-
-    return this.getHardAction({ board, playerId })
+    const controlMove = this.getControlChainAction(board, position)
+    return controlMove ? controlMove.edge : this.getFallbackInfernoAction(board, playerId, position)
   }
 
-  shouldUseFastInfernoStrategy(board, openEdgeCount) {
+  analyzeInfernoPosition(board) {
+    const openEdges = this.getOpenEdges(board)
+    const scoringEdges = this.getScoringEdges(board)
+    const safeEdges = this.getSafeEdges(board)
     const totalEdges = board.edges.size
-    const claimedEdges = totalEdges - openEdgeCount
-    const claimedRatio = totalEdges === 0 ? 1 : claimedEdges / totalEdges
+    const claimedRatio = totalEdges === 0 ? 1 : (totalEdges - openEdges.length) / totalEdges
+    const sim = this.createSimulation(board)
+    const threeEdgeCells = this.countThreeEdgeCellsInSimulation(board, sim)
+    const chainInfo = this.analyzeChainsAndLoopsInSimulation(board, sim)
+    const hasLongChain = chainInfo.components.some(component => component.size >= 3)
 
-    if (claimedRatio < 0.45) return true
-
-    const safeEdges = this.getSafeEdges(board)
-    if (safeEdges.length === 0) return false
-
-    return openEdgeCount > this.getSearchOpenEdgeLimit(board)
+    return {
+      openEdges,
+      scoringEdges,
+      safeEdges,
+      claimedRatio,
+      threeEdgeCells,
+      chainInfo,
+      isControlPhase:
+        safeEdges.length === 0 ||
+        threeEdgeCells >= 2 ||
+        hasLongChain ||
+        claimedRatio >= 0.65
+    }
   }
 
-  getFastInfernoAction(board) {
-    const safeEdges = this.getSafeEdges(board)
+  evaluateControlScoringMove(board, edge, position) {
+    const sim = this.createSimulation(board)
+    const closedCount = this.claimEdgeInSimulation(board, sim, edge.id).length
+    const ownForced = this.countForcedChainClosures(board, sim)
+    const gained = closedCount + ownForced
+    const after = this.describeSimulationPosition(board, sim)
+    const opponentForced = this.countForcedChainClosures(board, this.cloneBasicSimulation(sim))
+    const keepsControl = this.hasControlAfterMove(board, sim, position)
+    const forcesOpponentOpenChain = this.forcesOpponentToOpenChain(board, sim)
+    const givesLongChain = after.longChainExposure > 0 ? 1 : 0
+    const givesLoop = after.loopExposure > 0 ? 1 : 0
+
+    return gained * 80 +
+      (keepsControl ? 300 : 0) +
+      (forcesOpponentOpenChain ? 260 : 0) -
+      givesLongChain * 350 -
+      givesLoop * 420 -
+      opponentForced * 120
+  }
+
+  evaluateScoringMoveAftermath(board, edge) {
+    const sim = this.createSimulation(board)
+    const closedCount = this.claimEdgeInSimulation(board, sim, edge.id).length
+    const ownForced = this.countForcedChainClosures(board, sim)
+    const opponentForced = this.countForcedChainClosures(board, this.cloneBasicSimulation(sim))
+    const after = this.describeSimulationPosition(board, sim)
+
+    return closedCount * 100 +
+      ownForced * 80 -
+      opponentForced * 120 +
+      (after.safeEdges.length > 0 ? 40 : -180) -
+      after.longChainExposure * 300 -
+      after.loopExposure * 400
+  }
+
+  getFastInfernoAction(board, position = this.analyzeInfernoPosition(board)) {
+    const safeEdges = position.safeEdges
 
     if (safeEdges.length > 0) {
       return this.pickBestByScore(safeEdges, edge => {
+        const sim = this.createSimulation(board)
+        this.claimEdgeInSimulation(board, sim, edge.id)
+        const after = this.describeSimulationPosition(board, sim)
         const cells = board.getAdjacentCellsByEdge(edge.id)
         let score = 0
 
@@ -218,7 +281,11 @@ export default class SimpleAI {
           score += cell.edgeIds.length - claimed
         }
 
-        return score
+        return score * 10 +
+          after.safeEdges.length * 4 -
+          after.threeEdgeCells * 35 -
+          after.longChainExposure * 90 -
+          after.loopExposure * 120
       })
     }
 
@@ -226,9 +293,8 @@ export default class SimpleAI {
     return this.pickRandom(leastBadEdges)
   }
 
-  getMinimaxAction(board, playerId) {
-    const safeEdges = this.getSafeEdges(board)
-    const openEdges = safeEdges.length > 0 ? safeEdges : this.getOpenEdges(board)
+  getMinimaxAction(board, playerId, position = this.analyzeInfernoPosition(board)) {
+    const openEdges = this.getInfernoSearchCandidates(board, position)
     if (openEdges.length === 0) return null
 
     const allOpenEdgeCount = this.getOpenEdges(board).length
@@ -269,6 +335,106 @@ export default class SimpleAI {
     }
 
     return bestMoves.length > 0 ? this.pickRandom(bestMoves) : null
+  }
+
+  getInfernoSearchCandidates(board, position) {
+    const candidates = new Map()
+
+    for (const edge of position.scoringEdges) candidates.set(edge.id, edge)
+    for (const edge of position.safeEdges) candidates.set(edge.id, edge)
+
+    const controlEdges = this.rankControlChainEdges(board, position)
+      .slice(0, this.getBranchLimit(board))
+
+    for (const item of controlEdges) candidates.set(item.edge.id, item.edge)
+
+    for (const edge of position.openEdges) {
+      if (this.isDoubleCrossCandidate(board, edge, position)) {
+        candidates.set(edge.id, edge)
+      }
+    }
+
+    if (candidates.size === 0) {
+      for (const edge of position.openEdges) candidates.set(edge.id, edge)
+    }
+
+    return Array.from(candidates.values())
+  }
+
+  getControlChainAction(board, position = this.analyzeInfernoPosition(board), options = {}) {
+    const ranked = this.rankControlChainEdges(board, position, options)
+    return ranked.length > 0 ? ranked[0] : null
+  }
+
+  rankControlChainEdges(board, position, options = {}) {
+    const scoringIds = new Set(position.scoringEdges.map(edge => edge.id))
+    const edges = position.openEdges.filter(edge => (
+      !options.preferNonScoring || !scoringIds.has(edge.id)
+    ))
+
+    return edges
+      .map(edge => ({
+        edge,
+        score: this.scoreControlChainEdge(board, edge, position)
+      }))
+      .sort((a, b) => b.score - a.score)
+  }
+
+  scoreControlChainEdge(board, edge, position) {
+    const sim = this.createSimulation(board)
+    const closedCount = this.claimEdgeInSimulation(board, sim, edge.id).length
+    const giveaway = this.countForcedChainClosures(board, this.cloneBasicSimulation(sim))
+    const after = this.describeSimulationPosition(board, sim)
+    const currentComponent = position.chainInfo.edgeToComponent.get(edge.id)
+    const componentSize = currentComponent ? currentComponent.size : 0
+    const loopPenalty = currentComponent && currentComponent.isLoop ? 1 : 0
+    const opensLargestChain = componentSize > 0 && componentSize === position.chainInfo.largestChainSize
+    const forcesOpen = this.forcesOpponentToOpenChain(board, sim)
+
+    return (forcesOpen ? 260 : 0) -
+      giveaway * 120 -
+      closedCount * 30 -
+      loopPenalty * 420 -
+      (opensLargestChain ? 90 : 0) -
+      componentSize * 3 -
+      after.loopExposure * 80
+  }
+
+  getFallbackInfernoAction(board, playerId, position = this.analyzeInfernoPosition(board)) {
+    const scoringEdges = position.scoringEdges
+    const controlMove = this.getControlChainAction(board, position, { preferNonScoring: true })
+
+    if (scoringEdges.length > 0) {
+      const bestScoring = this.pickBestWithScore(scoringEdges, edge => (
+        this.evaluateControlScoringMove(board, edge, position)
+      ))
+
+      if (this.scoringMoveKeepsControl(board, bestScoring.edge, position)) {
+        return bestScoring.edge
+      }
+
+      if (controlMove) return controlMove.edge
+    }
+
+    return controlMove ? controlMove.edge : this.getHardAction({ board, playerId })
+  }
+
+  scoringMoveKeepsControl(board, edge, position) {
+    const sim = this.createSimulation(board)
+    this.claimEdgeInSimulation(board, sim, edge.id)
+    return this.hasControlAfterMove(board, sim, position)
+  }
+
+  isDoubleCrossCandidate(board, edge, position) {
+    const component = position.chainInfo.edgeToComponent.get(edge.id)
+    if (!component || component.size < 3) return false
+
+    const sim = this.createSimulation(board)
+    const closedCount = this.claimEdgeInSimulation(board, sim, edge.id).length
+    if (closedCount === 0) return false
+
+    const after = this.describeSimulationPosition(board, sim)
+    return after.chainInfo.components.some(item => item.size === 2)
   }
 
   minimax(board, sim, currentPlayerId, aiPlayerId, depth, alpha, beta, deadline) {
@@ -433,6 +599,176 @@ export default class SimpleAI {
     return !!component && component.isLoop
   }
 
+  describeSimulationPosition(board, sim) {
+    const safeEdges = this.getSafeEdgesInSimulation(board, sim)
+    const scoringEdges = this.getScoringEdgesInSimulation(board, sim)
+    const chainInfo = this.analyzeChainsAndLoopsInSimulation(board, sim)
+    let longChainExposure = 0
+    let loopExposure = 0
+
+    for (const component of chainInfo.components) {
+      if (component.size >= 3) longChainExposure += component.size
+      if (component.isLoop) loopExposure += component.size
+    }
+
+    return {
+      safeEdges,
+      scoringEdges,
+      threeEdgeCells: this.countThreeEdgeCellsInSimulation(board, sim),
+      chainInfo,
+      longChainExposure,
+      loopExposure
+    }
+  }
+
+  getScoringEdgesInSimulation(board, sim) {
+    const result = []
+
+    for (const edge of board.edges.values()) {
+      if (sim.claimedEdgeIds.has(edge.id)) continue
+
+      const closesCell = board.getAdjacentCellsByEdge(edge.id)
+        .some(cell => {
+          if (sim.ownedCellIds.has(cell.id)) return false
+          return this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1
+        })
+
+      if (closesCell) result.push(edge)
+    }
+
+    return result
+  }
+
+  getSafeEdgesInSimulation(board, sim) {
+    const result = []
+
+    for (const edge of board.edges.values()) {
+      if (sim.claimedEdgeIds.has(edge.id)) continue
+
+      const makesThree = board.getAdjacentCellsByEdge(edge.id)
+        .some(cell => {
+          if (sim.ownedCellIds.has(cell.id)) return false
+          return this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 2
+        })
+
+      if (!makesThree) result.push(edge)
+    }
+
+    return result
+  }
+
+  countThreeEdgeCellsInSimulation(board, sim) {
+    let count = 0
+
+    for (const cell of board.cells.values()) {
+      if (sim.ownedCellIds.has(cell.id)) continue
+
+      if (this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1) {
+        count++
+      }
+    }
+
+    return count
+  }
+
+  analyzeChainsAndLoopsInSimulation(board, sim) {
+    const chainCells = []
+    const cellSet = new Set()
+
+    for (const cell of board.cells.values()) {
+      if (sim.ownedCellIds.has(cell.id)) continue
+
+      if (this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 2) {
+        chainCells.push(cell)
+        cellSet.add(cell.id)
+      }
+    }
+
+    const visited = new Set()
+    const components = []
+    const edgeToComponent = new Map()
+    let largestChainSize = 0
+
+    for (const cell of chainCells) {
+      if (visited.has(cell.id)) continue
+
+      const stack = [cell]
+      const cells = []
+      let degreeTwoCount = 0
+
+      visited.add(cell.id)
+
+      while (stack.length > 0) {
+        const current = stack.pop()
+        const neighbors = this.getOpenNeighborCellsInSimulation(board, sim, current, cellSet)
+
+        cells.push(current)
+        if (neighbors.length === 2) degreeTwoCount++
+
+        for (const neighbor of neighbors) {
+          if (visited.has(neighbor.id)) continue
+
+          visited.add(neighbor.id)
+          stack.push(neighbor)
+        }
+      }
+
+      const component = {
+        cells,
+        size: cells.length,
+        isLoop: cells.length > 2 && degreeTwoCount === cells.length
+      }
+
+      largestChainSize = Math.max(largestChainSize, component.size)
+      components.push(component)
+
+      for (const componentCell of cells) {
+        for (const edgeId of componentCell.edgeIds) {
+          const edge = board.getEdge(edgeId)
+          if (edge && !sim.claimedEdgeIds.has(edgeId)) {
+            edgeToComponent.set(edgeId, component)
+          }
+        }
+      }
+    }
+
+    return {
+      components,
+      edgeToComponent,
+      largestChainSize
+    }
+  }
+
+  getOpenNeighborCellsInSimulation(board, sim, cell, allowedCellIds) {
+    const result = []
+
+    for (const edgeId of cell.edgeIds) {
+      const edge = board.getEdge(edgeId)
+      if (!edge || sim.claimedEdgeIds.has(edge.id)) continue
+
+      for (const cellId of edge.adjacentCellIds) {
+        if (cellId !== cell.id && allowedCellIds.has(cellId)) {
+          result.push(board.getCell(cellId))
+        }
+      }
+    }
+
+    return result
+  }
+
+  hasControlAfterMove(board, sim) {
+    const after = this.describeSimulationPosition(board, sim)
+    if (after.scoringEdges.length > 0) return true
+    if (after.safeEdges.length > 0) return true
+    return this.forcesOpponentToOpenChain(board, sim)
+  }
+
+  forcesOpponentToOpenChain(board, sim) {
+    const after = this.describeSimulationPosition(board, sim)
+    const hasLongChain = after.chainInfo.components.some(component => component.size >= 3)
+    return after.scoringEdges.length === 0 && after.safeEdges.length === 0 && hasLongChain
+  }
+
   createSearchSimulation(board, playerId) {
     const sim = this.createSimulation(board)
     const opponentId = this.getOpponentId(playerId)
@@ -456,6 +792,13 @@ export default class SimpleAI {
       claimedEdgeIds: new Set(sim.claimedEdgeIds),
       ownedCellIds: new Set(sim.ownedCellIds),
       scores: Object.assign({}, sim.scores)
+    }
+  }
+
+  cloneBasicSimulation(sim) {
+    return {
+      claimedEdgeIds: new Set(sim.claimedEdgeIds),
+      ownedCellIds: new Set(sim.ownedCellIds)
     }
   }
 
@@ -500,12 +843,20 @@ export default class SimpleAI {
       })
       .length
 
-    if (closingCells > 0) return 1000 + closingCells * 100
+    if (closingCells > 0) return 1200 + closingCells * 120
 
     const makesThree = this.countTwoEdgeCellsAroundEdge(board, sim, edge)
     const chainRisk = this.countChainRiskAfterMove(board, sim, edge)
+    const nextSim = this.cloneBasicSimulation(sim)
+    this.claimEdgeInSimulation(board, nextSim, edge.id)
+    const after = this.describeSimulationPosition(board, nextSim)
+    const forcesOpen = this.forcesOpponentToOpenChain(board, nextSim)
 
-    return -makesThree * 80 - chainRisk * 12
+    return (forcesOpen ? 220 : 0) -
+      makesThree * 80 -
+      chainRisk * 12 -
+      after.longChainExposure * 40 -
+      after.loopExposure * 70
   }
 
   countChainRiskAfterMove(board, sim, edge) {
@@ -524,26 +875,19 @@ export default class SimpleAI {
     const aiScore = sim.scores[aiPlayerId] || 0
     const opponentScore = sim.scores[opponentId] || 0
     const scoreDiff = aiScore - opponentScore
-    const openEdges = this.getOpenEdgesInSimulation(board, sim)
-    let safeEdges = 0
-    let opponentThreats = 0
-    let chainExposure = 0
+    const after = this.describeSimulationPosition(board, sim)
+    const control = this.hasControlAfterMove(board, sim) ? 1 : 0
+    const forceOpponentOpen = this.forcesOpponentToOpenChain(board, sim) ? 1 : 0
+    const opponentForced = this.countForcedChainClosures(board, this.cloneBasicSimulation(sim))
 
-    for (const edge of openEdges) {
-      const makesThree = this.countTwoEdgeCellsAroundEdge(board, sim, edge)
-      const closesNow = board.getAdjacentCellsByEdge(edge.id)
-        .some(cell => {
-          if (sim.ownedCellIds.has(cell.id)) return false
-
-          return this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1
-        })
-
-      if (makesThree === 0 && !closesNow) safeEdges++
-      if (closesNow) opponentThreats++
-      if (makesThree > 0) chainExposure += makesThree
-    }
-
-    return scoreDiff * 100 + safeEdges * 3 - opponentThreats * 45 - chainExposure * 12
+    return scoreDiff * 100 +
+      control * 280 +
+      after.safeEdges.length * 4 +
+      forceOpponentOpen * 220 -
+      opponentForced * 130 -
+      after.threeEdgeCells * 50 -
+      after.longChainExposure * 160 -
+      after.loopExposure * 220
   }
 
   getSearchDepth(board, openEdgeCount) {
@@ -723,6 +1067,28 @@ export default class SimpleAI {
   // -------------------------
   // 工具函数
   // -------------------------
+  pickBestWithScore(list, scoreFn) {
+    let bestScore = -Infinity
+    const bestItems = []
+
+    for (const item of list) {
+      const score = scoreFn(item)
+
+      if (score > bestScore) {
+        bestScore = score
+        bestItems.length = 0
+        bestItems.push(item)
+      } else if (score === bestScore) {
+        bestItems.push(item)
+      }
+    }
+
+    return {
+      edge: this.pickRandom(bestItems),
+      score: bestScore
+    }
+  }
+
   countClaimedEdges(board, cell) {
     let count = 0
 
