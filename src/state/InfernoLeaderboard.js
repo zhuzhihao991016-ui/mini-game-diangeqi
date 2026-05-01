@@ -1,8 +1,25 @@
-const STORAGE_KEY = 'dots_inferno_3x3_leaderboard'
+const STORAGE_KEY = 'dots_leaderboards_v2'
 const DEFAULT_NICKNAME = '\u73a9\u5bb6'
 const MAX_RECORDS = 20
-const LIST_PATH = '/api/leaderboard/inferno-3x3'
-const RESULT_PATH = '/api/leaderboard/inferno-3x3/result'
+const DEFAULT_BOARD_KEY = 'inferno-3x3'
+
+const LEADERBOARD_CONFIG = {
+  'inferno-3x3': {
+    listPath: '/api/leaderboard/inferno-3x3',
+    resultPath: '/api/leaderboard/inferno-3x3/result',
+    sortType: 'inferno'
+  },
+  'inferno-6x6': {
+    listPath: '/api/leaderboard/inferno-6x6',
+    resultPath: '/api/leaderboard/inferno-6x6/result',
+    sortType: 'inferno'
+  },
+  challenge: {
+    listPath: '/api/leaderboard/challenge',
+    resultPath: '/api/leaderboard/challenge/result',
+    sortType: 'challenge'
+  }
+}
 
 function now() {
   return Date.now()
@@ -21,29 +38,64 @@ export default class InfernoLeaderboard {
   constructor(options = {}) {
     this.envId = options.envId || ''
     this.serviceName = options.serviceName || ''
-    this.listPath = options.listPath || LIST_PATH
-    this.resultPath = options.resultPath || RESULT_PATH
+    this.boardKey = options.boardKey || DEFAULT_BOARD_KEY
     this.data = this.load()
     this.lastError = null
+    this.ensureBoardData(this.boardKey)
+  }
+
+  getConfig(boardKey = this.boardKey) {
+    return LEADERBOARD_CONFIG[boardKey] || LEADERBOARD_CONFIG[DEFAULT_BOARD_KEY]
+  }
+
+  ensureBoardData(boardKey = this.boardKey) {
+    if (!this.data.boards) this.data.boards = {}
+    if (!this.data.boards[boardKey]) {
+      this.data.boards[boardKey] = {
+        records: [],
+        pendingFailures: {}
+      }
+    }
+
+    return this.data.boards[boardKey]
+  }
+
+  setBoardKey(boardKey) {
+    if (!LEADERBOARD_CONFIG[boardKey]) return this.boardKey
+    this.boardKey = boardKey
+    this.ensureBoardData(boardKey)
+    this.save()
+    return this.boardKey
   }
 
   load() {
     const stored = wx.getStorageSync(STORAGE_KEY)
 
-    if (stored && typeof stored === 'object') {
+    if (stored && typeof stored === 'object' && stored.boards) {
       return {
         localPlayerId: stored.localPlayerId || createLocalPlayerId(),
-        records: Array.isArray(stored.records) ? stored.records : [],
-        pendingFailures: stored.pendingFailures && typeof stored.pendingFailures === 'object'
-          ? stored.pendingFailures
-          : {}
+        boards: stored.boards
+      }
+    }
+
+    const legacy = wx.getStorageSync('dots_inferno_3x3_leaderboard')
+    if (legacy && typeof legacy === 'object') {
+      return {
+        localPlayerId: legacy.localPlayerId || createLocalPlayerId(),
+        boards: {
+          [DEFAULT_BOARD_KEY]: {
+            records: Array.isArray(legacy.records) ? legacy.records : [],
+            pendingFailures: legacy.pendingFailures && typeof legacy.pendingFailures === 'object'
+              ? legacy.pendingFailures
+              : {}
+          }
+        }
       }
     }
 
     return {
       localPlayerId: createLocalPlayerId(),
-      records: [],
-      pendingFailures: {}
+      boards: {}
     }
   }
 
@@ -75,41 +127,75 @@ export default class InfernoLeaderboard {
     })
   }
 
-  async refresh(limit = MAX_RECORDS) {
+  normalizeRecord(record, sortType = 'inferno') {
+    if (sortType === 'challenge') {
+      return {
+        playerId: record.playerId || '',
+        nickname: sanitizeNickname(record.nickname),
+        bestLevel: Number(record.bestLevel) || 0,
+        bestScore: Number(record.bestScore) || 0,
+        clearedAt: Number(record.clearedAt) || 0
+      }
+    }
+
+    return {
+      playerId: record.playerId || '',
+      nickname: sanitizeNickname(record.nickname),
+      failuresBeforeClear: Number(record.failuresBeforeClear) || 0,
+      clearedAt: Number(record.clearedAt) || 0
+    }
+  }
+
+  async refresh(limit = MAX_RECORDS, boardKey = this.boardKey) {
+    this.setBoardKey(boardKey)
+    const config = this.getConfig(boardKey)
+    const boardData = this.ensureBoardData(boardKey)
+
     try {
-      const res = await this.callContainer(`${this.listPath}?limit=${limit}`, {}, 'GET')
+      const res = await this.callContainer(`${config.listPath}?limit=${limit}`, {}, 'GET')
       const records = res && res.data && Array.isArray(res.data.records)
         ? res.data.records
         : []
 
-      this.data.records = records.map(record => ({
-        playerId: record.playerId || '',
-        nickname: sanitizeNickname(record.nickname),
-        failuresBeforeClear: Number(record.failuresBeforeClear) || 0,
-        clearedAt: Number(record.clearedAt) || 0
-      }))
+      boardData.records = records.map(record => this.normalizeRecord(record, config.sortType))
       this.lastError = null
       this.save()
     } catch (err) {
       this.lastError = err
-      console.warn('刷新炼狱排行榜失败，使用本地缓存:', err)
+      console.warn('刷新排行榜失败，使用本地缓存:', err)
     }
 
-    return this.getRecords(limit)
+    return this.getRecords(limit, boardKey)
   }
 
-  recordGameResult({ playerId, nickname, won }) {
+  recordGameResult({ playerId, nickname, won, boardKey = this.boardKey, challengeLevel = 0, challengeScore = 0 }) {
+    this.setBoardKey(boardKey)
+    const config = this.getConfig(boardKey)
     const id = playerId || this.data.localPlayerId
     const name = sanitizeNickname(nickname)
-    const failures = this.data.pendingFailures[id] || 0
+
+    if (config.sortType === 'challenge') {
+      return this.recordChallengeResult({
+        playerId: id,
+        nickname: name,
+        won,
+        challengeLevel,
+        challengeScore,
+        boardKey
+      })
+    }
+
+    const boardData = this.ensureBoardData(boardKey)
+    const failures = boardData.pendingFailures[id] || 0
 
     if (!won) {
-      this.data.pendingFailures[id] = failures + 1
+      boardData.pendingFailures[id] = failures + 1
       this.save()
       this.submitGameResult({
         playerId: id,
         nickname: name,
-        won: false
+        won: false,
+        boardKey
       })
       return null
     }
@@ -121,68 +207,121 @@ export default class InfernoLeaderboard {
       clearedAt: now()
     }
 
-    const existingIndex = this.data.records.findIndex(item => item.playerId === id)
-
+    const existingIndex = boardData.records.findIndex(item => item.playerId === id)
     if (existingIndex >= 0) {
-      const existing = this.data.records[existingIndex]
+      const existing = boardData.records[existingIndex]
       if (failures <= existing.failuresBeforeClear) {
-        this.data.records[existingIndex] = record
+        boardData.records[existingIndex] = record
       } else {
-        this.data.records[existingIndex] = {
+        boardData.records[existingIndex] = {
           ...existing,
           nickname: name
         }
       }
     } else {
-      this.data.records.push(record)
+      boardData.records.push(record)
     }
 
-    this.data.pendingFailures[id] = 0
-    this.data.records = this.getRecords()
+    boardData.pendingFailures[id] = 0
+    boardData.records = this.getRecords(MAX_RECORDS, boardKey)
     this.save()
     this.submitGameResult({
       playerId: id,
       nickname: name,
       won,
-      failuresBeforeClear: failures
+      failuresBeforeClear: failures,
+      boardKey
     })
 
     return record
   }
 
-  async submitGameResult({ playerId, nickname, won, failuresBeforeClear = 0 }) {
+  recordChallengeResult({ playerId, nickname, won, challengeLevel = 0, challengeScore = 0, boardKey = 'challenge' }) {
+    if (!won) return null
+
+    const boardData = this.ensureBoardData(boardKey)
+    const record = {
+      playerId,
+      nickname,
+      bestLevel: Number(challengeLevel) || 0,
+      bestScore: Number(challengeScore) || 0,
+      clearedAt: now()
+    }
+    const existingIndex = boardData.records.findIndex(item => item.playerId === playerId)
+
+    if (existingIndex >= 0) {
+      const existing = boardData.records[existingIndex]
+      const isBetter = record.bestLevel > existing.bestLevel ||
+        (record.bestLevel === existing.bestLevel && record.bestScore > existing.bestScore)
+
+      boardData.records[existingIndex] = isBetter ? record : {
+        ...existing,
+        nickname
+      }
+    } else {
+      boardData.records.push(record)
+    }
+
+    boardData.records = this.getRecords(MAX_RECORDS, boardKey)
+    this.save()
+    this.submitGameResult({
+      playerId,
+      nickname,
+      won,
+      challengeLevel: record.bestLevel,
+      challengeScore: record.bestScore,
+      boardKey
+    })
+
+    return record
+  }
+
+  async submitGameResult({ playerId, nickname, won, failuresBeforeClear = 0, challengeLevel = 0, challengeScore = 0, boardKey = this.boardKey }) {
+    const config = this.getConfig(boardKey)
+    const boardData = this.ensureBoardData(boardKey)
+
     try {
-      const res = await this.callContainer(this.resultPath, {
+      const res = await this.callContainer(config.resultPath, {
         playerId,
         nickname: sanitizeNickname(nickname),
         won: !!won,
-        failuresBeforeClear: Number(failuresBeforeClear) || 0
+        failuresBeforeClear: Number(failuresBeforeClear) || 0,
+        challengeLevel: Number(challengeLevel) || 0,
+        challengeScore: Number(challengeScore) || 0
       })
       const records = res && res.data && Array.isArray(res.data.records)
         ? res.data.records
         : null
 
       if (records) {
-        this.data.records = records.map(record => ({
-          playerId: record.playerId || '',
-          nickname: sanitizeNickname(record.nickname),
-          failuresBeforeClear: Number(record.failuresBeforeClear) || 0,
-          clearedAt: Number(record.clearedAt) || 0
-        }))
+        boardData.records = records.map(record => this.normalizeRecord(record, config.sortType))
         this.save()
       }
 
       this.lastError = null
     } catch (err) {
       this.lastError = err
-      console.warn('提交炼狱排行榜结果失败，已保留本地记录:', err)
+      console.warn('提交排行榜结果失败，已保留本地记录:', err)
     }
   }
 
-  getRecords(limit = MAX_RECORDS) {
-    return this.data.records
+  getRecords(limit = MAX_RECORDS, boardKey = this.boardKey) {
+    const config = this.getConfig(boardKey)
+    const boardData = this.ensureBoardData(boardKey)
+
+    return boardData.records
       .slice()
       .sort((a, b) => {
+        if (config.sortType === 'challenge') {
+          if ((a.bestLevel || 0) !== (b.bestLevel || 0)) {
+            return (b.bestLevel || 0) - (a.bestLevel || 0)
+          }
+          if ((a.bestScore || 0) !== (b.bestScore || 0)) {
+            return (b.bestScore || 0) - (a.bestScore || 0)
+          }
+          return (a.clearedAt || 0) - (b.clearedAt || 0)
+        }
+
         if (a.failuresBeforeClear !== b.failuresBeforeClear) {
           return a.failuresBeforeClear - b.failuresBeforeClear
         }

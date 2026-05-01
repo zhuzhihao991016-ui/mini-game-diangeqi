@@ -30,6 +30,8 @@ export default class RuleEngine {
     const adjacentCells = board.getAdjacentCellsByEdge(edge.id)
 
     for (const cell of adjacentCells) {
+      if (cell.isObstacle) continue
+
       if (!cell.isOwned() && cell.isClosed(board)) {
         cell.setOwner(action.playerId)
         closedCells.push(cell)

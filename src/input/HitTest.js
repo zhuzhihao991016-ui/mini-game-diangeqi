@@ -13,7 +13,7 @@ export default class HitTest {
     let nearestDistance = Infinity
 
     for (const edge of this.board.edges.values()) {
-      if (edge.ownerId) continue  // ⭐关键修复
+      if (edge.isClaimed()) continue
 
       const line = this.getEdgeLine(edge)
       const distance = this.pointToSegmentDistance(x, y, line.x1, line.y1, line.x2, line.y2)
@@ -31,8 +31,25 @@ export default class HitTest {
     if (this.type === 'hex') {
       return this.getHexEdgeLine(edge)
     }
+
+    if (this.type === 'mixed-shape') {
+      return this.getMixedShapeEdgeLine(edge)
+    }
   
     return this.getSquareEdgeLine(edge)
+  }
+
+  getMixedShapeEdgeLine(edge) {
+    const size = this.cellSize
+    const ox = this.originX
+    const oy = this.originY
+
+    return {
+      x1: ox + edge.unitX1 * size,
+      y1: oy + edge.unitY1 * size,
+      x2: ox + edge.unitX2 * size,
+      y2: oy + edge.unitY2 * size
+    }
   }
 
   getSquareEdgeLine(edge) {

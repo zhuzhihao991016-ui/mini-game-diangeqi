@@ -8,6 +8,9 @@ const PLAYER_NAMES = {
   p2: '\u73a9\u5bb6\u4e8c'
 }
 
+const FONT_FAMILY = 'Arial, sans-serif'
+const TROPHY_SYMBOL = '\uD83C\uDFC6\uFE0E'
+
 export default class GameOverPanel {
   constructor(ctx, canvas, width, height) {
     this.ctx = ctx
@@ -31,90 +34,94 @@ export default class GameOverPanel {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
     ctx.fillRect(0, 0, W, H)
 
-    const panelW = W - 48
-    const panelH = 400
-    const panelX = 24
-    const panelY = (H - panelH) / 2
+    const panelW = Math.min(W - 32, 360)
+    const panelH = Math.min(Math.max(392, H * 0.56), H - 56)
+    const panelX = (W - panelW) / 2
+    const panelY = Math.max(28, (H - panelH) / 2)
     const accentColor = state.winnerId ? PLAYER_COLORS[state.winnerId] : '#AAAAAA'
+    const padding = Math.max(18, Math.min(24, panelW * 0.07))
 
-    this._roundRect(ctx, panelX, panelY, panelW, panelH, 18)
+    this._roundRect(ctx, panelX, panelY, panelW, panelH, 14)
     ctx.fillStyle = '#FFFFFF'
     ctx.fill()
 
-    this._roundRectTop(ctx, panelX, panelY, panelW, 6, 18)
+    this._roundRectTop(ctx, panelX, panelY, panelW, 6, 14)
     ctx.fillStyle = accentColor
     ctx.fill()
 
     ctx.fillStyle = '#222222'
-    ctx.font = 'bold 22px Arial'
+    ctx.font = `bold 22px ${FONT_FAMILY}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('\u6e38\u620f\u7ed3\u675f', W / 2, panelY + 44)
+    ctx.fillText('\u6e38\u620f\u7ed3\u675f', W / 2, panelY + 42)
 
     let resultText = '\u52bf\u5747\u529b\u654c\uff0c\u5e73\u5c40\uff01'
     if (state.winnerId) {
-      resultText = `${this.getPlayerName(state.winnerId, localPlayerId)} \u83b7\u80dc\uff01`
+      resultText = `${TROPHY_SYMBOL} ${this.getPlayerName(state.winnerId, localPlayerId)} \u83b7\u80dc\uff01`
     }
 
-    ctx.font = 'bold 26px Arial'
+    ctx.font = `bold 25px ${FONT_FAMILY}`
     ctx.fillStyle = accentColor
-    ctx.fillText(resultText, W / 2, panelY + 96)
+    this._drawFittedText(resultText, W / 2, panelY + 90, panelW - padding * 2, 25, 18, 'bold')
 
-    const cardY = panelY + 128
-    const cardGap = 12
-    const cardW = (panelW - 48 - cardGap) / 2
-    const cardH = 86
+    const cardY = panelY + 122
+    const cardGap = 10
+    const cardW = (panelW - padding * 2 - cardGap) / 2
+    const cardH = 100
     const playerIds = Object.keys(state.scores)
 
     playerIds.forEach((pid, index) => {
-      const cardX = panelX + 24 + index * (cardW + cardGap)
+      const cardX = panelX + padding + index * (cardW + cardGap)
       const score = state.scores[pid]
       const color = PLAYER_COLORS[pid] || '#AAAAAA'
       const name = this.getPlayerName(pid, localPlayerId)
       const isWinner = state.winnerId === pid
       const isMe = localPlayerId === pid
 
-      this._roundRect(ctx, cardX, cardY, cardW, cardH, 12)
-      ctx.fillStyle = isWinner ? color : '#F5F5F5'
+      this._roundRect(ctx, cardX, cardY, cardW, cardH, 8)
+      ctx.fillStyle = isWinner ? color : '#F7F8FA'
       ctx.fill()
 
       if (!isWinner) {
-        this._roundRectTop(ctx, cardX, cardY, cardW, 4, 12)
+        this._roundRectTop(ctx, cardX, cardY, cardW, 4, 8)
         ctx.fillStyle = color
         ctx.fill()
       }
 
+      const trophyY = cardY + 20
+      const nameY = isWinner ? cardY + 43 : cardY + 31
+
       if (isWinner) {
-        ctx.font = '18px Arial'
+        ctx.font = `22px ${FONT_FAMILY}`
         ctx.fillStyle = '#FFD700'
-        ctx.fillText('\u51a0\u519b', cardX + cardW / 2, cardY + 15)
+        ctx.fillText(TROPHY_SYMBOL, cardX + cardW / 2, trophyY)
       }
 
-      ctx.font = 'bold 15px Arial'
+      ctx.font = `bold 15px ${FONT_FAMILY}`
       ctx.fillStyle = isWinner ? 'rgba(255,255,255,0.9)' : '#666666'
-      ctx.fillText(name, cardX + cardW / 2, cardY + 30)
+      this._drawFittedText(name, cardX + cardW / 2, nameY, cardW - 18, 15, 11, 'bold')
 
       if (isMe) {
         const tagW = 42
-        const tagH = 20
+        const tagH = 18
         const tagX = cardX + cardW / 2 - tagW / 2
-        const tagY = cardY + 45
-        this._roundRect(ctx, tagX, tagY, tagW, tagH, 10)
+        const tagY = cardY + 53
+        this._roundRect(ctx, tagX, tagY, tagW, tagH, 9)
         ctx.fillStyle = isWinner ? 'rgba(255,255,255,0.22)' : color
         ctx.fill()
-        ctx.font = 'bold 12px Arial'
+        ctx.font = `bold 12px ${FONT_FAMILY}`
         ctx.fillStyle = '#FFFFFF'
         ctx.fillText('\u6211', tagX + tagW / 2, tagY + tagH / 2 + 1)
       }
 
-      ctx.font = 'bold 30px Arial'
+      ctx.font = `bold 30px ${FONT_FAMILY}`
       ctx.fillStyle = isWinner ? '#FFFFFF' : color
-      ctx.fillText(`${score}`, cardX + cardW / 2, cardY + 70)
+      ctx.fillText(`${score}`, cardX + cardW / 2, cardY + cardH - 18)
     })
 
-    const btnW = panelW - 48
+    const btnW = panelW - padding * 2
     const btnH = 48
-    const btnX = panelX + 24
+    const btnX = panelX + padding
     const restartBtnY = panelY + panelH - 24 - btnH * 2 - 12
     const menuBtnY = panelY + panelH - 24 - btnH
 
@@ -140,10 +147,10 @@ export default class GameOverPanel {
     ctx.fillStyle = leftColor
     ctx.fill()
     ctx.fillStyle = textColor
-    ctx.font = 'bold 17px Arial'
+    ctx.font = `bold 17px ${FONT_FAMILY}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(text, x + width / 2 + 3, y + height / 2)
+    this._drawFittedText(text, x + width / 2 + 3, y + height / 2, width - 28, 17, 12, 'bold')
   }
 
   isRestartButtonHit(x, y) {
@@ -195,5 +202,20 @@ export default class GameOverPanel {
     ctx.lineTo(x, y + r)
     ctx.arcTo(x, y, x + r, y, r)
     ctx.closePath()
+  }
+
+  _drawFittedText(text, x, y, maxWidth, fontSize, minFontSize = 10, weight = '') {
+    const ctx = this.ctx
+    const safeText = `${text}`
+    const fontWeight = weight ? `${weight} ` : ''
+    let size = fontSize
+
+    while (size > minFontSize) {
+      ctx.font = `${fontWeight}${size}px ${FONT_FAMILY}`
+      if (ctx.measureText(safeText).width <= maxWidth) break
+      size -= 1
+    }
+
+    ctx.fillText(safeText, x, y)
   }
 }

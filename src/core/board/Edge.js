@@ -15,10 +15,13 @@ export default class Edge {
 
     this.ownerId = null
     this.adjacentCellIds = []
+    this.isBlocked = false
+    this.isObstacleEdge = false
+    this.blockReason = null
   }
 
   isClaimed() {
-    return this.ownerId !== null
+    return this.ownerId !== null || this.isBlocked
   }
 
   claim(playerId) {

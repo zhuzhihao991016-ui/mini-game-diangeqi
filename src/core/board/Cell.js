@@ -6,6 +6,8 @@ export default class Cell {
 
     this.edgeIds = edgeIds
     this.ownerId = null
+    this.isDoubleScore = false
+    this.isObstacle = false
   }
 
   isOwned() {

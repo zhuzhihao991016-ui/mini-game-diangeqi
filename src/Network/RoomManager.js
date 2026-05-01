@@ -210,7 +210,8 @@ export default class RoomManager extends EventEmitter {
       nickname,
       boardType: options.boardType || 'square',
       rows: options.rows || 3,
-      cols: options.cols || 3
+      cols: options.cols || 3,
+      isFunMode: !!options.isFunMode
     })
 
     return waiter

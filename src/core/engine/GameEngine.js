@@ -37,6 +37,14 @@ export default class GameEngine {
       return { success: false }
     }
 
+    const isChainClosure = result.closedCells.length > 1
+
+    for (const cell of result.closedCells) {
+      if (cell.isDoubleScore && isChainClosure) {
+        cell.doubleScoreActivated = true
+      }
+    }
+
     if (!result.extraTurn) {
       this.turnManager.nextTurn()
     }
@@ -70,9 +78,29 @@ export default class GameEngine {
 
       const player = this.players.find(p => p.id === cell.ownerId)
       if (player) {
-        player.score += 1
+        player.score += this.getCellScoreValue(cell)
       }
     }
+  }
+
+  getCellScoreValue(cell) {
+    if (!cell || cell.isObstacle) return 0
+    if (cell.isDoubleScore && cell.doubleScoreActivated) return 2
+    return 1
+  }
+
+  getMaxScore() {
+    let total = 0
+
+    for (const cell of this.board.cells.values()) {
+      total += this.getCellScoreValue({
+        isObstacle: cell.isObstacle,
+        isDoubleScore: cell.isDoubleScore,
+        doubleScoreActivated: true
+      })
+    }
+
+    return total
   }
 
   getState() {

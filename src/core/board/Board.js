@@ -35,6 +35,7 @@ export default class Board {
 
   isAllCellsClosed() {
     for (const cell of this.cells.values()) {
+      if (cell.isObstacle) continue
       if (!cell.isOwned()) return false
     }
 

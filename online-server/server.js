@@ -25,6 +25,14 @@ const MYSQL_LEADERBOARD_TABLE = normalizeSqlIdentifier(
   process.env.MYSQL_LEADERBOARD_TABLE || 'inferno_3x3_leaderboard',
   'inferno_3x3_leaderboard'
 )
+const MYSQL_LEADERBOARD_TABLE_6X6 = normalizeSqlIdentifier(
+  process.env.MYSQL_LEADERBOARD_TABLE_6X6 || 'inferno_6x6_leaderboard',
+  'inferno_6x6_leaderboard'
+)
+const MYSQL_CHALLENGE_LEADERBOARD_TABLE = normalizeSqlIdentifier(
+  process.env.MYSQL_CHALLENGE_LEADERBOARD_TABLE || 'challenge_leaderboard',
+  'challenge_leaderboard'
+)
 
 const DEFAULT_BOARD_ROWS = 3
 const DEFAULT_BOARD_COLS = 3
@@ -38,10 +46,16 @@ const clients = new Map()
 const clientKeyToPlayerId = new Map()
 const usersByOpenId = new Map()
 const openIdByPlayerId = new Map()
+const LEADERBOARD_TABLES = {
+  'inferno-3x3': MYSQL_LEADERBOARD_TABLE,
+  'inferno-6x6': MYSQL_LEADERBOARD_TABLE_6X6
+}
 const infernoLeaderboardRecords = new Map()
 const infernoPendingFailures = new Map()
+const challengeLeaderboardRecords = new Map()
 const mysqlPool = initMysqlPool()
-let infernoTableReady = false
+const infernoTablesReady = new Set()
+let challengeTableReady = false
 
 function normalizeSqlIdentifier(value, fallback) {
   const text = String(value || '').trim()
@@ -50,6 +64,15 @@ function normalizeSqlIdentifier(value, fallback) {
 
 function quoteIdentifier(value) {
   return `\`${normalizeSqlIdentifier(value, 'inferno_3x3_leaderboard')}\``
+}
+
+function getInfernoLeaderboardTable(boardKey = 'inferno-3x3') {
+  return LEADERBOARD_TABLES[boardKey] || LEADERBOARD_TABLES['inferno-3x3']
+}
+
+function getBoardMemoryMap(rootMap, boardKey = 'inferno-3x3') {
+  if (!rootMap.has(boardKey)) rootMap.set(boardKey, new Map())
+  return rootMap.get(boardKey)
 }
 
 function initMysqlPool() {
@@ -209,29 +232,33 @@ function publicInfernoLeaderboardRecord(record, index = 0) {
   }
 }
 
-function getMemoryInfernoLeaderboard(limit = 20) {
-  return sortInfernoLeaderboardRecords(Array.from(infernoLeaderboardRecords.values()))
+function getMemoryInfernoLeaderboard(limit = 20, boardKey = 'inferno-3x3') {
+  const records = getBoardMemoryMap(infernoLeaderboardRecords, boardKey)
+
+  return sortInfernoLeaderboardRecords(Array.from(records.values()))
     .slice(0, limit)
     .map(publicInfernoLeaderboardRecord)
 }
 
-function recordMemoryInfernoGameResult({ playerId, nickname, won, failuresBeforeClear }) {
+function recordMemoryInfernoGameResult({ playerId, nickname, won, failuresBeforeClear, boardKey = 'inferno-3x3' }) {
   const id = getLeaderboardPlayerId(playerId)
 
   if (!id) {
     return null
   }
 
+  const records = getBoardMemoryMap(infernoLeaderboardRecords, boardKey)
+  const pendingFailures = getBoardMemoryMap(infernoPendingFailures, boardKey)
   const user = getUserByPlayerId(id)
   const name = normalizeNickname(nickname || (user && user.nickname) || '')
-  const serverFailures = infernoPendingFailures.get(id) || 0
+  const serverFailures = pendingFailures.get(id) || 0
   const clientFailures = Number.isFinite(failuresBeforeClear) && failuresBeforeClear >= 0
     ? Math.floor(failuresBeforeClear)
     : 0
   const failures = Math.max(serverFailures, clientFailures)
 
   if (!won) {
-    infernoPendingFailures.set(id, failures + 1)
+    pendingFailures.set(id, failures + 1)
     return null
   }
 
@@ -242,17 +269,17 @@ function recordMemoryInfernoGameResult({ playerId, nickname, won, failuresBefore
     failuresBeforeClear: failures,
     clearedAt: now
   }
-  const current = infernoLeaderboardRecords.get(id)
+  const current = records.get(id)
 
   if (!current || failures <= current.failuresBeforeClear) {
-    infernoLeaderboardRecords.set(id, nextRecord)
+    records.set(id, nextRecord)
   } else if (current.nickname !== name) {
     current.nickname = name
   }
 
-  infernoPendingFailures.set(id, 0)
+  pendingFailures.set(id, 0)
 
-  return infernoLeaderboardRecords.get(id)
+  return records.get(id)
 }
 
 function normalizeLeaderboardRow(row) {
@@ -268,12 +295,13 @@ function normalizeLeaderboardRow(row) {
   }
 }
 
-async function ensureInfernoLeaderboardTable() {
-  if (!mysqlPool || infernoTableReady) return
+async function ensureInfernoLeaderboardTable(boardKey = 'inferno-3x3') {
+  const tableName = getInfernoLeaderboardTable(boardKey)
+  if (!mysqlPool || infernoTablesReady.has(tableName)) return
 
   try {
     await mysqlPool.execute(`
-      CREATE TABLE IF NOT EXISTS ${quoteIdentifier(MYSQL_LEADERBOARD_TABLE)} (
+      CREATE TABLE IF NOT EXISTS ${quoteIdentifier(tableName)} (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         player_id VARCHAR(80) NOT NULL,
         nickname VARCHAR(24) NOT NULL DEFAULT '玩家',
@@ -291,18 +319,19 @@ async function ensureInfernoLeaderboardTable() {
         DEFAULT CHARSET=utf8mb4
         COLLATE=utf8mb4_unicode_ci
     `)
-    infernoTableReady = true
+    infernoTablesReady.add(tableName)
   } catch (err) {
     console.error('ensure mysql leaderboard table failed:', err)
     throw err
   }
 }
 
-async function findInfernoLeaderboardRow(playerId) {
-  await ensureInfernoLeaderboardTable()
+async function findInfernoLeaderboardRow(playerId, boardKey = 'inferno-3x3') {
+  await ensureInfernoLeaderboardTable(boardKey)
 
   if (!mysqlPool) return null
 
+  const tableName = getInfernoLeaderboardTable(boardKey)
   const [rows] = await mysqlPool.execute(
     `SELECT
       player_id,
@@ -313,7 +342,7 @@ async function findInfernoLeaderboardRow(playerId) {
       cleared_at,
       created_at,
       updated_at
-    FROM ${quoteIdentifier(MYSQL_LEADERBOARD_TABLE)}
+    FROM ${quoteIdentifier(tableName)}
     WHERE player_id = ?
     LIMIT 1`,
     [playerId]
@@ -322,13 +351,14 @@ async function findInfernoLeaderboardRow(playerId) {
   return rows.length > 0 ? normalizeLeaderboardRow(rows[0]) : null
 }
 
-async function saveInfernoLeaderboardRow(record) {
-  await ensureInfernoLeaderboardTable()
+async function saveInfernoLeaderboardRow(record, boardKey = 'inferno-3x3') {
+  await ensureInfernoLeaderboardTable(boardKey)
 
   if (!mysqlPool) return null
 
+  const tableName = getInfernoLeaderboardTable(boardKey)
   await mysqlPool.execute(
-    `INSERT INTO ${quoteIdentifier(MYSQL_LEADERBOARD_TABLE)} (
+    `INSERT INTO ${quoteIdentifier(tableName)} (
       player_id,
       nickname,
       pending_failures,
@@ -360,21 +390,22 @@ async function saveInfernoLeaderboardRow(record) {
   return record
 }
 
-async function getPublicInfernoLeaderboard(limit = 20) {
+async function getPublicInfernoLeaderboard(limit = 20, boardKey = 'inferno-3x3') {
   if (!mysqlPool) {
-    return getMemoryInfernoLeaderboard(limit)
+    return getMemoryInfernoLeaderboard(limit, boardKey)
   }
 
   try {
-    await ensureInfernoLeaderboardTable()
+    await ensureInfernoLeaderboardTable(boardKey)
     const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20))
+    const tableName = getInfernoLeaderboardTable(boardKey)
     const [rows] = await mysqlPool.execute(
       `SELECT
         player_id,
         nickname,
         failures_before_clear,
         cleared_at
-      FROM ${quoteIdentifier(MYSQL_LEADERBOARD_TABLE)}
+      FROM ${quoteIdentifier(tableName)}
       WHERE has_cleared = 1
       ORDER BY failures_before_clear ASC, cleared_at ASC
       LIMIT ${safeLimit}`
@@ -385,13 +416,15 @@ async function getPublicInfernoLeaderboard(limit = 20) {
       .map(publicInfernoLeaderboardRecord)
   } catch (err) {
     console.error('load mysql leaderboard failed, use memory fallback:', err)
-    return getMemoryInfernoLeaderboard(limit)
+    return getMemoryInfernoLeaderboard(limit, boardKey)
   }
 }
 
 async function recordInfernoGameResult(payload) {
+  const boardKey = LEADERBOARD_TABLES[payload.boardKey] ? payload.boardKey : 'inferno-3x3'
+
   if (!mysqlPool) {
-    return recordMemoryInfernoGameResult(payload)
+    return recordMemoryInfernoGameResult({ ...payload, boardKey })
   }
 
   const id = getLeaderboardPlayerId(payload.playerId)
@@ -400,7 +433,7 @@ async function recordInfernoGameResult(payload) {
   try {
     const user = getUserByPlayerId(id)
     const name = normalizeNickname(payload.nickname || (user && user.nickname) || '')
-    const current = await findInfernoLeaderboardRow(id)
+    const current = await findInfernoLeaderboardRow(id, boardKey)
     const now = Date.now()
     const serverFailures = current ? current.pendingFailures : 0
     const clientFailures = Number.isFinite(payload.failuresBeforeClear) && payload.failuresBeforeClear >= 0
@@ -418,7 +451,7 @@ async function recordInfernoGameResult(payload) {
         clearedAt: current ? current.clearedAt : 0,
         createdAt: current ? current.createdAt : now,
         updatedAt: now
-      })
+      }, boardKey)
 
       return null
     }
@@ -434,12 +467,231 @@ async function recordInfernoGameResult(payload) {
       createdAt: current ? current.createdAt : now,
       updatedAt: now
     }
-    const saved = await saveInfernoLeaderboardRow(nextRecord)
+    const saved = await saveInfernoLeaderboardRow(nextRecord, boardKey)
 
     return publicInfernoLeaderboardRecord(saved, 0)
   } catch (err) {
     console.error('save mysql leaderboard failed, use memory fallback:', err)
-    return recordMemoryInfernoGameResult(payload)
+    return recordMemoryInfernoGameResult({ ...payload, boardKey })
+  }
+}
+
+function sortChallengeLeaderboardRecords(records) {
+  return records
+    .slice()
+    .sort((a, b) => {
+      if (a.bestLevel !== b.bestLevel) return b.bestLevel - a.bestLevel
+      if (a.bestScore !== b.bestScore) return b.bestScore - a.bestScore
+      return a.clearedAt - b.clearedAt
+    })
+}
+
+function publicChallengeLeaderboardRecord(record, index = 0) {
+  return {
+    rank: index + 1,
+    playerId: record.playerId,
+    nickname: record.nickname,
+    bestLevel: record.bestLevel,
+    bestScore: record.bestScore,
+    clearedAt: record.clearedAt
+  }
+}
+
+function normalizeChallengeLeaderboardRow(row) {
+  return {
+    playerId: getLeaderboardPlayerId(row.player_id || row.playerId),
+    nickname: normalizeNickname(row.nickname),
+    bestLevel: Number(row.best_level ?? row.bestLevel) || 0,
+    bestScore: Number(row.best_score ?? row.bestScore) || 0,
+    clearedAt: Number(row.cleared_at ?? row.clearedAt) || 0,
+    createdAt: Number(row.created_at ?? row.createdAt) || Date.now(),
+    updatedAt: Number(row.updated_at ?? row.updatedAt) || Date.now()
+  }
+}
+
+function getMemoryChallengeLeaderboard(limit = 20) {
+  return sortChallengeLeaderboardRecords(Array.from(challengeLeaderboardRecords.values()))
+    .slice(0, limit)
+    .map(publicChallengeLeaderboardRecord)
+}
+
+function recordMemoryChallengeGameResult({ playerId, nickname, won, challengeLevel, challengeScore }) {
+  const id = getLeaderboardPlayerId(playerId)
+  if (!id || !won) return null
+
+  const user = getUserByPlayerId(id)
+  const name = normalizeNickname(nickname || (user && user.nickname) || '')
+  const nextRecord = {
+    playerId: id,
+    nickname: name,
+    bestLevel: Math.max(0, Math.floor(Number(challengeLevel) || 0)),
+    bestScore: Math.max(0, Math.floor(Number(challengeScore) || 0)),
+    clearedAt: Date.now()
+  }
+  const current = challengeLeaderboardRecords.get(id)
+  const isBetter = !current ||
+    nextRecord.bestLevel > current.bestLevel ||
+    (nextRecord.bestLevel === current.bestLevel && nextRecord.bestScore > current.bestScore)
+
+  if (isBetter) {
+    challengeLeaderboardRecords.set(id, nextRecord)
+  } else if (current.nickname !== name) {
+    current.nickname = name
+  }
+
+  return challengeLeaderboardRecords.get(id)
+}
+
+async function ensureChallengeLeaderboardTable() {
+  if (!mysqlPool || challengeTableReady) return
+
+  try {
+    await mysqlPool.execute(`
+      CREATE TABLE IF NOT EXISTS ${quoteIdentifier(MYSQL_CHALLENGE_LEADERBOARD_TABLE)} (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        player_id VARCHAR(80) NOT NULL,
+        nickname VARCHAR(24) NOT NULL DEFAULT '鐜╁',
+        best_level INT UNSIGNED NOT NULL DEFAULT 0,
+        best_score INT UNSIGNED NOT NULL DEFAULT 0,
+        cleared_at BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        created_at BIGINT UNSIGNED NOT NULL,
+        updated_at BIGINT UNSIGNED NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uk_player_id (player_id),
+        KEY idx_rank (best_level, best_score, cleared_at),
+        KEY idx_updated_at (updated_at)
+      ) ENGINE=InnoDB
+        DEFAULT CHARSET=utf8mb4
+        COLLATE=utf8mb4_unicode_ci
+    `)
+    challengeTableReady = true
+  } catch (err) {
+    console.error('ensure mysql challenge leaderboard table failed:', err)
+    throw err
+  }
+}
+
+async function findChallengeLeaderboardRow(playerId) {
+  await ensureChallengeLeaderboardTable()
+
+  if (!mysqlPool) return null
+
+  const [rows] = await mysqlPool.execute(
+    `SELECT
+      player_id,
+      nickname,
+      best_level,
+      best_score,
+      cleared_at,
+      created_at,
+      updated_at
+    FROM ${quoteIdentifier(MYSQL_CHALLENGE_LEADERBOARD_TABLE)}
+    WHERE player_id = ?
+    LIMIT 1`,
+    [playerId]
+  )
+
+  return rows.length > 0 ? normalizeChallengeLeaderboardRow(rows[0]) : null
+}
+
+async function saveChallengeLeaderboardRow(record) {
+  await ensureChallengeLeaderboardTable()
+
+  if (!mysqlPool) return null
+
+  await mysqlPool.execute(
+    `INSERT INTO ${quoteIdentifier(MYSQL_CHALLENGE_LEADERBOARD_TABLE)} (
+      player_id,
+      nickname,
+      best_level,
+      best_score,
+      cleared_at,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      nickname = VALUES(nickname),
+      best_level = VALUES(best_level),
+      best_score = VALUES(best_score),
+      cleared_at = VALUES(cleared_at),
+      updated_at = VALUES(updated_at)`,
+    [
+      record.playerId,
+      record.nickname,
+      record.bestLevel,
+      record.bestScore,
+      record.clearedAt,
+      record.createdAt,
+      record.updatedAt
+    ]
+  )
+
+  return record
+}
+
+async function getPublicChallengeLeaderboard(limit = 20) {
+  if (!mysqlPool) {
+    return getMemoryChallengeLeaderboard(limit)
+  }
+
+  try {
+    await ensureChallengeLeaderboardTable()
+    const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20))
+    const [rows] = await mysqlPool.execute(
+      `SELECT
+        player_id,
+        nickname,
+        best_level,
+        best_score,
+        cleared_at
+      FROM ${quoteIdentifier(MYSQL_CHALLENGE_LEADERBOARD_TABLE)}
+      WHERE best_level > 0
+      ORDER BY best_level DESC, best_score DESC, cleared_at ASC
+      LIMIT ${safeLimit}`
+    )
+
+    return rows
+      .map(normalizeChallengeLeaderboardRow)
+      .map(publicChallengeLeaderboardRecord)
+  } catch (err) {
+    console.error('load mysql challenge leaderboard failed, use memory fallback:', err)
+    return getMemoryChallengeLeaderboard(limit)
+  }
+}
+
+async function recordChallengeGameResult(payload) {
+  if (!mysqlPool) {
+    return recordMemoryChallengeGameResult(payload)
+  }
+
+  const id = getLeaderboardPlayerId(payload.playerId)
+  if (!id || !payload.won) return null
+
+  try {
+    const user = getUserByPlayerId(id)
+    const name = normalizeNickname(payload.nickname || (user && user.nickname) || '')
+    const current = await findChallengeLeaderboardRow(id)
+    const now = Date.now()
+    const bestLevel = Math.max(0, Math.floor(Number(payload.challengeLevel) || 0))
+    const bestScore = Math.max(0, Math.floor(Number(payload.challengeScore) || 0))
+    const shouldReplaceBest = !current ||
+      bestLevel > current.bestLevel ||
+      (bestLevel === current.bestLevel && bestScore > current.bestScore)
+    const nextRecord = {
+      playerId: id,
+      nickname: name,
+      bestLevel: shouldReplaceBest ? bestLevel : current.bestLevel,
+      bestScore: shouldReplaceBest ? bestScore : current.bestScore,
+      clearedAt: shouldReplaceBest ? now : current.clearedAt,
+      createdAt: current ? current.createdAt : now,
+      updatedAt: now
+    }
+    const saved = await saveChallengeLeaderboardRow(nextRecord)
+
+    return publicChallengeLeaderboardRecord(saved, 0)
+  } catch (err) {
+    console.error('save mysql challenge leaderboard failed, use memory fallback:', err)
+    return recordMemoryChallengeGameResult(payload)
   }
 }
 
@@ -491,7 +743,8 @@ function normalizeBoardConfig(payload = {}) {
   return {
     boardType: 'square',
     rows,
-    cols
+    cols,
+    isFunMode: !!(payload.isFunMode || board.isFunMode)
   }
 }
 
@@ -1588,12 +1841,12 @@ app.post('/api/users/nickname', (req, res) => {
   })
 })
 
-app.get('/api/leaderboard/inferno-3x3', async (req, res) => {
+async function handleInfernoLeaderboardList(req, res, boardKey) {
   try {
     const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 20))
 
     res.json({
-      records: await getPublicInfernoLeaderboard(limit)
+      records: await getPublicInfernoLeaderboard(limit, boardKey)
     })
   } catch (err) {
     console.error('leaderboard list failed:', err)
@@ -1602,9 +1855,9 @@ app.get('/api/leaderboard/inferno-3x3', async (req, res) => {
       message: 'failed to load leaderboard'
     })
   }
-})
+}
 
-app.post('/api/leaderboard/inferno-3x3/result', async (req, res) => {
+async function handleInfernoLeaderboardResult(req, res, boardKey) {
   try {
     const playerId = getLeaderboardPlayerId(req.body && req.body.playerId)
     const nickname = normalizeNickname(req.body && req.body.nickname)
@@ -1623,15 +1876,85 @@ app.post('/api/leaderboard/inferno-3x3/result', async (req, res) => {
       playerId,
       nickname,
       won,
-      failuresBeforeClear
+      failuresBeforeClear,
+      boardKey
     })
 
     res.json({
       record,
-      records: await getPublicInfernoLeaderboard()
+      records: await getPublicInfernoLeaderboard(20, boardKey)
     })
   } catch (err) {
     console.error('leaderboard result failed:', err)
+    res.status(500).json({
+      error: 'LEADERBOARD_RESULT_FAILED',
+      message: 'failed to save leaderboard result'
+    })
+  }
+}
+
+app.get('/api/leaderboard/inferno-3x3', (req, res) => {
+  handleInfernoLeaderboardList(req, res, 'inferno-3x3')
+})
+
+app.post('/api/leaderboard/inferno-3x3/result', (req, res) => {
+  handleInfernoLeaderboardResult(req, res, 'inferno-3x3')
+})
+
+app.get('/api/leaderboard/inferno-6x6', (req, res) => {
+  handleInfernoLeaderboardList(req, res, 'inferno-6x6')
+})
+
+app.post('/api/leaderboard/inferno-6x6/result', (req, res) => {
+  handleInfernoLeaderboardResult(req, res, 'inferno-6x6')
+})
+
+app.get('/api/leaderboard/challenge', async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 20))
+
+    res.json({
+      records: await getPublicChallengeLeaderboard(limit)
+    })
+  } catch (err) {
+    console.error('challenge leaderboard list failed:', err)
+    res.status(500).json({
+      error: 'LEADERBOARD_LIST_FAILED',
+      message: 'failed to load leaderboard'
+    })
+  }
+})
+
+app.post('/api/leaderboard/challenge/result', async (req, res) => {
+  try {
+    const playerId = getLeaderboardPlayerId(req.body && req.body.playerId)
+    const nickname = normalizeNickname(req.body && req.body.nickname)
+    const won = !!(req.body && req.body.won)
+    const challengeLevel = Number(req.body && req.body.challengeLevel)
+    const challengeScore = Number(req.body && req.body.challengeScore)
+
+    if (!playerId) {
+      res.status(400).json({
+        error: 'PLAYER_ID_REQUIRED',
+        message: 'playerId is required'
+      })
+      return
+    }
+
+    const record = await recordChallengeGameResult({
+      playerId,
+      nickname,
+      won,
+      challengeLevel,
+      challengeScore
+    })
+
+    res.json({
+      record,
+      records: await getPublicChallengeLeaderboard()
+    })
+  } catch (err) {
+    console.error('challenge leaderboard result failed:', err)
     res.status(500).json({
       error: 'LEADERBOARD_RESULT_FAILED',
       message: 'failed to save leaderboard result'

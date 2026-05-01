@@ -2,6 +2,7 @@ import BaseScene from './BaseScene'
 import MenuScene from './MenuScene'
 import GameEngine from '../core/engine/GameEngine'
 import BoardFactory from '../core/board/BoardFactory'
+import { setupFunModeBoard } from '../core/mode/FunModeSetup'
 import Renderer from '../render/Renderer'
 import BoardRenderer from '../render/BoardRenderer'
 import GameOverPanel from '../render/GameOverPanel'
@@ -10,6 +11,8 @@ import ClaimEdgeAction from '../core/action/ClaimEdgeAction'
 import AnimationManager from '../animation/AnimationManager'
 import SimpleAI from '../ai/SimpleAI'
 import { getSceneSafeLayout } from '../utils/SafeArea'
+import { createChallengeLevels } from '../core/level/ChallengeLevels'
+import { unlockChallengeLevel } from '../state/ChallengeProgress'
 
 const PLAYER_COLORS = {
   p1: '#4A90E2',
@@ -22,7 +25,7 @@ const DEFAULT_PLAYER_NAMES = {
 }
 
 export default class BattleScene extends BaseScene {
-  constructor({ canvas, ctx, inputManager, sceneManager, width, height, rows = 3, cols = 3,  boardType = 'square', mode = 'local_2p', aiDifficulty = 'easy', onlineManager = null, userManager = null, leaderboardManager = null }) {
+  constructor({ canvas, ctx, inputManager, sceneManager, width, height, rows = 3, cols = 3,  boardType = 'square', mode = 'local_2p', aiDifficulty = 'easy', isFunMode = false, funModeSeed = '', onlineManager = null, userManager = null, leaderboardManager = null, challengeMode = false, challengeLevelIndex = 1, challengeLevels = null }) {
     super()
   
     this.canvas = canvas
@@ -38,6 +41,12 @@ export default class BattleScene extends BaseScene {
     this.boardType = boardType
     this.mode = mode
     this.aiDifficulty = aiDifficulty
+    this.isFunMode = !!isFunMode
+    this.funModeSeed = funModeSeed || ''
+    this.challengeMode = !!challengeMode
+    this.challengeLevelIndex = challengeLevelIndex || 1
+    this.challengeLevels = challengeLevels || null
+    this.currentChallengeLevel = null
     this.userManager = userManager || wx.__userManager || null
     this.leaderboardManager = leaderboardManager || wx.__leaderboardManager || null
   
@@ -100,10 +109,30 @@ export default class BattleScene extends BaseScene {
   resetGame() {
     let board
 
-    if (this.boardType === 'hex') {
+    if (this.challengeMode) {
+      this.ensureChallengeLevels()
+      this.currentChallengeLevel = this.challengeLevels[this.challengeLevelIndex - 1] || this.challengeLevels[0]
+      this.aiDifficulty = this.currentChallengeLevel.aiDifficulty
+      this.ai = new SimpleAI({ difficulty: this.aiDifficulty })
+      this.boardType = 'mixed-shape'
+      board = BoardFactory.createMixedShapeBoard({
+        layout: this.currentChallengeLevel.layout,
+        cellSize: 1,
+        padding: 0
+      })
+      board.challengeMeta = {
+        level: this.currentChallengeLevel.index,
+        score: this.currentChallengeLevel.score,
+        aiDifficulty: this.currentChallengeLevel.aiDifficulty
+      }
+    } else if (this.boardType === 'hex') {
       board = BoardFactory.createHexBoard(3) // 半径3
     } else {
       board = BoardFactory.createSquareBoard(this.rows, this.cols)
+    }
+
+    if (this.isFunMode) {
+      setupFunModeBoard(board, { seed: this.getFunModeSeed() })
     }
 
     this.engine = new GameEngine({
@@ -303,21 +332,28 @@ export default class BattleScene extends BaseScene {
         this.animationManager.playCell(cell.id, action.playerId)
       }
 
-      this.recordInfernoLeaderboardResult()
+      this.recordLeaderboardResult()
     }
   
     return result
   }
 
-  recordInfernoLeaderboardResult() {
+  recordLeaderboardResult() {
     if (this.resultRecorded) return
-    if (!this.leaderboardManager || typeof this.leaderboardManager.recordGameResult !== 'function') return
-    if (this.mode !== 'ai') return
-    if (this.aiDifficulty !== 'inferno') return
-    if (this.boardType !== 'square' || this.rows !== 3 || this.cols !== 3) return
 
     const state = this.engine.getState()
     if (!state || state.status !== 'finished') return
+
+    if (this.challengeMode) {
+      this.recordChallengeLeaderboardResult(state)
+      return
+    }
+
+    if (this.mode !== 'ai') return
+    if (!this.leaderboardManager || typeof this.leaderboardManager.recordGameResult !== 'function') return
+    if (this.aiDifficulty !== 'inferno') return
+    if (this.boardType !== 'square') return
+    if (!((this.rows === 3 && this.cols === 3) || (this.rows === 6 && this.cols === 6))) return
 
     this.resultRecorded = true
 
@@ -326,7 +362,27 @@ export default class BattleScene extends BaseScene {
         ? this.userManager.getPlayerId()
         : '',
       nickname: this.getPlayerDisplayName('p1'),
-      won: state.winnerId === 'p1'
+      won: state.winnerId === 'p1',
+      boardKey: this.rows === 6 ? 'inferno-6x6' : 'inferno-3x3'
+    })
+  }
+
+  recordChallengeLeaderboardResult(state) {
+    if (state.winnerId !== 'p1') return
+
+    this.resultRecorded = true
+    unlockChallengeLevel(this.challengeLevelIndex + 1, this.challengeLevels ? this.challengeLevels.length : 20)
+    if (!this.leaderboardManager || typeof this.leaderboardManager.recordGameResult !== 'function') return
+
+    this.leaderboardManager.recordGameResult({
+      playerId: this.userManager && typeof this.userManager.getPlayerId === 'function'
+        ? this.userManager.getPlayerId()
+        : '',
+      nickname: this.getPlayerDisplayName('p1'),
+      won: true,
+      boardKey: 'challenge',
+      challengeLevel: this.challengeLevelIndex,
+      challengeScore: this.currentChallengeLevel ? this.currentChallengeLevel.score : 0
     })
   }
 
@@ -413,6 +469,7 @@ export default class BattleScene extends BaseScene {
 
   applyRoomStateToLocalGame(roomState) {
     if (!roomState) return
+    this.updateFunModeSeedFromRoom(roomState)
 
     const edgeOwners = {}
     const cellOwners = {}
@@ -497,6 +554,7 @@ export default class BattleScene extends BaseScene {
       this.lastRoomRoundIndex = payload.roundIndex
     }
   
+    this.updateFunModeSeedFromRoom(payload)
     this.resetGame()
   
     this.localPlayerId = this.onlineManager && typeof this.onlineManager.getLocalGamePlayerId === 'function'
@@ -537,6 +595,18 @@ export default class BattleScene extends BaseScene {
     return DEFAULT_PLAYER_NAMES[playerId] || playerId
   }
 
+  ensureChallengeLevels() {
+    if (this.challengeLevels && this.challengeLevels.length > 0) return
+
+    const topY = this.safeLayout.insets.top + 210
+    const bottomPad = this.safeLayout.insets.bottom + 190
+    this.challengeLevels = createChallengeLevels({
+      maxWidth: this.width - 80,
+      maxHeight: this.height - topY - bottomPad,
+      minCellSize: 7
+    })
+  }
+
   createBoardLayout() {
     const paddingX = 40
     const topY = this.safeLayout.insets.top + 210
@@ -565,6 +635,23 @@ export default class BattleScene extends BaseScene {
       // 六边形棋盘：origin 是中心点
       originX = this.width / 2
       originY = topY + maxHeight / 2
+    } else if (this.boardType === 'mixed-shape') {
+      const meta = this.engine && this.engine.board && this.engine.board.layoutMeta
+        ? this.engine.board.layoutMeta
+        : { widthUnits: this.cols, heightUnits: this.rows }
+
+      cellSize = Math.floor(
+        Math.min(
+          maxWidth / Math.max(1, meta.widthUnits),
+          maxHeight / Math.max(1, meta.heightUnits)
+        )
+      )
+
+      const boardWidth = meta.widthUnits * cellSize
+      const boardHeight = meta.heightUnits * cellSize
+
+      originX = (this.width - boardWidth) / 2
+      originY = topY + (maxHeight - boardHeight) / 2
     } else {
       cellSize = Math.floor(
         Math.min(
@@ -586,6 +673,31 @@ export default class BattleScene extends BaseScene {
       originX,
       originY
     }
+  }
+
+  updateFunModeSeedFromRoom(roomState) {
+    if (!this.isFunMode || !roomState) return
+
+    const roomId = roomState.roomId || (this.onlineManager && this.onlineManager.roomId) || ''
+    const roundIndex = roomState.roundIndex || 1
+
+    if (roomId) {
+      this.funModeSeed = `${roomId}:${roundIndex}`
+    }
+  }
+
+  getFunModeSeed() {
+    if (this.funModeSeed) return this.funModeSeed
+
+    if (this.mode === 'online' && this.onlineManager) {
+      const roomState = this.onlineManager.roomState || {}
+      const roomId = roomState.roomId || this.onlineManager.roomId || ''
+      const roundIndex = roomState.roundIndex || 1
+
+      if (roomId) return `${roomId}:${roundIndex}`
+    }
+
+    return ''
   }
 
   updateAssistButtonLayout() {
@@ -662,6 +774,8 @@ export default class BattleScene extends BaseScene {
         if (this.gameOverPanel.isRestartButtonHit(x, y)) {
           if (this.mode === 'online') {
             this.requestOnlineRematch()
+          } else if (this.challengeMode) {
+            this.goToNextChallengeLevel()
           } else {
             this.resetGame()
           }
@@ -682,7 +796,7 @@ export default class BattleScene extends BaseScene {
       const edge = this.hitTest.getEdgeByPoint(x, y)
 
       if (!edge) return
-      if (edge.ownerId) return
+      if (edge.isClaimed()) return
       
       if (this.mode === 'online') {
         if (this.roomPaused) {
@@ -761,6 +875,22 @@ export default class BattleScene extends BaseScene {
     if (typeof this.onlineManager.requestRematch === 'function') {
       this.onlineManager.requestRematch()
     }
+  }
+
+  goToNextChallengeLevel() {
+    if (!this.challengeMode) return
+
+    const state = this.engine.getState()
+    if (!state || state.winnerId !== 'p1') {
+      this.resetGame()
+      return
+    }
+
+    if (this.challengeLevelIndex < this.challengeLevels.length) {
+      this.challengeLevelIndex += 1
+    }
+
+    this.resetGame()
   }
 
   requestOnlineUndo() {
@@ -854,6 +984,7 @@ export default class BattleScene extends BaseScene {
 
     return (
       this.isAiAssistEnabled() &&
+      !this.challengeMode &&
       !this.aiThinking &&
       state.status === 'playing' &&
       state.currentPlayerId === 'p1'
@@ -930,7 +1061,10 @@ export default class BattleScene extends BaseScene {
     }
 
     for (const cell of this.engine.board.cells.values()) {
-      cellOwners[cell.id] = cell.ownerId
+      cellOwners[cell.id] = {
+        ownerId: cell.ownerId,
+        doubleScoreActivated: !!cell.doubleScoreActivated
+      }
     }
 
     for (const player of this.engine.players) {
@@ -956,7 +1090,15 @@ export default class BattleScene extends BaseScene {
     }
 
     for (const cell of this.engine.board.cells.values()) {
-      cell.ownerId = snapshot.cellOwners[cell.id] || null
+      const cellSnapshot = snapshot.cellOwners[cell.id]
+
+      if (cellSnapshot && typeof cellSnapshot === 'object') {
+        cell.ownerId = cellSnapshot.ownerId || null
+        cell.doubleScoreActivated = !!cellSnapshot.doubleScoreActivated
+      } else {
+        cell.ownerId = cellSnapshot || null
+        cell.doubleScoreActivated = false
+      }
     }
 
     for (const player of this.engine.players) {
@@ -1019,6 +1161,10 @@ export default class BattleScene extends BaseScene {
       animationManager: this.animationManager,
       highlightedEdgeId: this.hintEdgeId
     })
+
+    if (this.challengeMode) {
+      this.drawChallengeHud()
+    }
   
     const state = this.engine.getState()
     this.drawPlayerCard('p2', state, 'top')
@@ -1034,9 +1180,7 @@ export default class BattleScene extends BaseScene {
           p1: this.getPlayerDisplayName('p1'),
           p2: this.getPlayerDisplayName('p2')
         },
-        restartText: this.mode === 'online' && this.rematchRequested
-          ? '\u7b49\u5f85\u5bf9\u65b9\u786e\u8ba4...'
-          : '\u518d\u6765\u4e00\u5c40'
+        restartText: this.getRestartText(state)
       })
     }
   
@@ -1047,6 +1191,51 @@ export default class BattleScene extends BaseScene {
     if (this.turnCoverVisible) {
       this.drawTurnCover()
     }
+  }
+
+  getRestartText(state) {
+    if (this.mode === 'online' && this.rematchRequested) {
+      return '\u7b49\u5f85\u5bf9\u65b9\u786e\u8ba4...'
+    }
+
+    if (this.challengeMode) {
+      if (state.winnerId === 'p1' && this.challengeLevelIndex < this.challengeLevels.length) {
+        return '\u4e0b\u4e00\u5173'
+      }
+
+      return '\u91cd\u8bd5\u672c\u5173'
+    }
+
+    return '\u518d\u6765\u4e00\u5c40'
+  }
+
+  drawChallengeHud() {
+    const ctx = this.ctx
+    const meta = this.currentChallengeLevel
+    if (!meta) return
+
+    const text = `\u95ef\u5173 ${meta.index}/20  \u8bc4\u5206 ${meta.score}  ${this.getAiDifficultyLabel(meta.aiDifficulty)}`
+    const x = this.width / 2
+    const y = this.safeLayout.insets.top + 92
+    const w = Math.min(this.width - 170, 260)
+    const h = 34
+
+    ctx.save()
+    this._roundRect(ctx, x - w / 2, y - h / 2, w, h, 8)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+    ctx.fill()
+    ctx.fillStyle = '#444444'
+    ctx.font = 'bold 13px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, x, y + 1)
+    ctx.restore()
+  }
+
+  getAiDifficultyLabel(difficulty) {
+    if (difficulty === 'inferno') return '\u70bc\u72f1 AI'
+    if (difficulty === 'hard') return '\u56f0\u96be AI'
+    return '\u666e\u901a AI'
   }
 
   /**
@@ -1069,7 +1258,7 @@ export default class BattleScene extends BaseScene {
     
       const color = PLAYER_COLORS[playerId]
       const score = state.scores[playerId] ?? 0
-      const total = this.engine.board.cells.size
+      const total = this.engine.getMaxScore()
       const isMe = this.mode === 'online' && this.localPlayerId === playerId
       const name = this.getPlayerDisplayName(playerId)
     

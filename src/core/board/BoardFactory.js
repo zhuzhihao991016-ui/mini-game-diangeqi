@@ -1,6 +1,7 @@
 import Board from './Board'
 import Cell from './Cell'
 import Edge from './Edge'
+import createMixedShapeBoard from './mixed-shape-board-generator'
 
 export default class BoardFactory {
   static createSquareBoard(rows, cols) {
@@ -139,6 +140,10 @@ export default class BoardFactory {
     console.log('boundary edges:', boundary)
     console.log('invalid edges:', invalid)
     return board
+  }
+
+  static createMixedShapeBoard(options = {}) {
+    return createMixedShapeBoard(options)
   }
 
   hexToPixel(q, r, size) {

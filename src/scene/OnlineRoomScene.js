@@ -58,6 +58,7 @@ export default class OnlineRoomScene extends BaseScene {
     boardType = 'square',
     rows = 3,
     cols = 3,
+    isFunMode = false,
     onlineManager = null,
     userManager = null
   }) {
@@ -72,6 +73,7 @@ export default class OnlineRoomScene extends BaseScene {
     this.boardType = boardType
     this.rows = rows
     this.cols = cols
+    this.isFunMode = !!isFunMode
     this.onlineManager = onlineManager || wx.__roomManager || null
     this.userManager = userManager || wx.__userManager || null
     this.page = 'home'
@@ -191,7 +193,7 @@ export default class OnlineRoomScene extends BaseScene {
       this.buttons = []
       this.statusText = T.creating
       this.bindOnlineManagerEvents()
-      const result = await this.onlineManager.createRoom({ boardType: this.boardType, rows: this.rows, cols: this.cols, nickname: this.getNickname() })
+      const result = await this.onlineManager.createRoom({ boardType: this.boardType, rows: this.rows, cols: this.cols, isFunMode: this.isFunMode, nickname: this.getNickname() })
       this.applyRoomBoard(result && result.board)
       this.roomId = result.roomId
       this.statusText = T.created
@@ -383,6 +385,8 @@ export default class OnlineRoomScene extends BaseScene {
       cols: this.cols,
       boardType: this.boardType,
       mode: 'online',
+      isFunMode: this.isFunMode,
+      funModeSeed: `${this.roomId || (this.onlineManager && this.onlineManager.roomId) || ''}:1`,
       onlineManager: this.onlineManager,
       userManager: this.userManager
     }))
@@ -393,6 +397,7 @@ export default class OnlineRoomScene extends BaseScene {
     if (board.boardType) this.boardType = board.boardType
     if (board.rows) this.rows = board.rows
     if (board.cols) this.cols = board.cols
+    if (board.isFunMode !== undefined) this.isFunMode = !!board.isFunMode
   }
 
   async ensureUserReady() {

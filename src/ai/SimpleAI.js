@@ -40,7 +40,7 @@ export default class SimpleAI {
     const result = []
   
     for (const edge of board.edges.values()) {
-      if (edge.ownerId) continue
+      if (!this.isEdgePlayable(edge)) continue
   
       const cells = board.getAdjacentCellsByEdge(edge.id)
   
@@ -65,7 +65,7 @@ export default class SimpleAI {
     const result = []
   
     for (const edge of board.edges.values()) {
-      if (edge.ownerId) continue
+      if (!this.isEdgePlayable(edge)) continue
   
       const cells = board.getAdjacentCellsByEdge(edge.id)
   
@@ -98,7 +98,7 @@ export default class SimpleAI {
     const candidates = []
   
     for (const edge of board.edges.values()) {
-      if (edge.ownerId) continue
+      if (!this.isEdgePlayable(edge)) continue
   
       const cells = board.getAdjacentCellsByEdge(edge.id)
   
@@ -166,6 +166,9 @@ export default class SimpleAI {
     const openEdges = position.openEdges
 
     if (position.isControlPhase) {
+      const doubleCross = this.getDoubleCrossAction(board, position)
+      if (doubleCross) return doubleCross.edge
+
       if (scoringEdges.length > 0) {
         return this.pickBestByScore(scoringEdges, edge => (
           this.evaluateControlScoringMove(board, edge, position)
@@ -214,6 +217,7 @@ export default class SimpleAI {
     const threeEdgeCells = this.countThreeEdgeCellsInSimulation(board, sim)
     const chainInfo = this.analyzeChainsAndLoopsInSimulation(board, sim)
     const hasLongChain = chainInfo.components.some(component => component.size >= 3)
+    const doubleCrossEdges = this.getDoubleCrossEdges(board, chainInfo)
 
     return {
       openEdges,
@@ -222,6 +226,7 @@ export default class SimpleAI {
       claimedRatio,
       threeEdgeCells,
       chainInfo,
+      doubleCrossEdges,
       isControlPhase:
         safeEdges.length === 0 ||
         threeEdgeCells >= 2 ||
@@ -348,10 +353,8 @@ export default class SimpleAI {
 
     for (const item of controlEdges) candidates.set(item.edge.id, item.edge)
 
-    for (const edge of position.openEdges) {
-      if (this.isDoubleCrossCandidate(board, edge, position)) {
-        candidates.set(edge.id, edge)
-      }
+    for (const item of position.doubleCrossEdges) {
+      candidates.set(item.edge.id, item.edge)
     }
 
     if (candidates.size === 0) {
@@ -400,6 +403,106 @@ export default class SimpleAI {
       after.loopExposure * 80
   }
 
+  getDoubleCrossAction(board, position = this.analyzeInfernoPosition(board)) {
+    if (!position.doubleCrossEdges || position.doubleCrossEdges.length === 0) return null
+
+    const ranked = position.doubleCrossEdges
+      .map(item => ({
+        edge: item.edge,
+        score: this.scoreDoubleCrossEdge(board, item, position)
+      }))
+      .sort((a, b) => b.score - a.score)
+
+    return ranked[0]
+  }
+
+  getDoubleCrossEdges(board, chainInfo) {
+    const result = []
+
+    for (const component of chainInfo.components) {
+      if (component.size < 3 || component.isLoop) continue
+
+      for (const cell of component.cells) {
+        for (const edgeId of cell.edgeIds) {
+          const edge = board.getEdge(edgeId)
+          if (!edge || !this.isEdgePlayable(edge)) continue
+
+          const adjacentChainCells = edge.adjacentCellIds
+            .map(cellId => board.getCell(cellId))
+            .filter(adjacentCell => (
+              adjacentCell &&
+              component.cells.some(componentCell => componentCell.id === adjacentCell.id)
+            ))
+
+          if (adjacentChainCells.length !== 2) continue
+          if (!this.isDoubleCrossSacrificeEdge(board, edge, adjacentChainCells)) continue
+
+          result.push({
+            edge,
+            component,
+            cells: adjacentChainCells
+          })
+        }
+      }
+    }
+
+    return this.uniqueEdgeItems(result)
+  }
+
+  isDoubleCrossSacrificeEdge(board, edge, cells) {
+    if (this.wouldScoreEdge(board, edge)) return false
+
+    const sim = this.createSimulation(board)
+    this.claimEdgeInSimulation(board, sim, edge.id)
+
+    let createdThreats = 0
+
+    for (const cell of cells) {
+      if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) continue
+      if (this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1) {
+        createdThreats++
+      }
+    }
+
+    if (createdThreats !== 2) return false
+
+    return this.countForcedChainClosures(board, this.cloneBasicSimulation(sim)) === 2
+  }
+
+  scoreDoubleCrossEdge(board, item, position) {
+    const sim = this.createSimulation(board)
+    this.claimEdgeInSimulation(board, sim, item.edge.id)
+    const opponentForced = this.countForcedChainClosures(board, this.cloneBasicSimulation(sim))
+    const after = this.describeSimulationPosition(board, sim)
+    const nextChains = after.chainInfo.components
+      .filter(component => component.size >= 3)
+      .length
+
+    return 900 +
+      nextChains * 260 -
+      Math.abs(opponentForced - 2) * 260 -
+      item.component.size * 8 -
+      after.loopExposure * 220
+  }
+
+  wouldScoreEdge(board, edge) {
+    return board.getAdjacentCellsByEdge(edge.id)
+      .some(cell => this.countClaimedEdges(board, cell) === cell.edgeIds.length - 1)
+  }
+
+  uniqueEdgeItems(items) {
+    const seen = new Set()
+    const result = []
+
+    for (const item of items) {
+      if (seen.has(item.edge.id)) continue
+      seen.add(item.edge.id)
+      result.push(item)
+    }
+
+    return result
+  }
+
   getFallbackInfernoAction(board, playerId, position = this.analyzeInfernoPosition(board)) {
     const scoringEdges = position.scoringEdges
     const controlMove = this.getControlChainAction(board, position, { preferNonScoring: true })
@@ -426,15 +529,7 @@ export default class SimpleAI {
   }
 
   isDoubleCrossCandidate(board, edge, position) {
-    const component = position.chainInfo.edgeToComponent.get(edge.id)
-    if (!component || component.size < 3) return false
-
-    const sim = this.createSimulation(board)
-    const closedCount = this.claimEdgeInSimulation(board, sim, edge.id).length
-    if (closedCount === 0) return false
-
-    const after = this.describeSimulationPosition(board, sim)
-    return after.chainInfo.components.some(item => item.size === 2)
+    return position.doubleCrossEdges.some(item => item.edge.id === edge.id)
   }
 
   minimax(board, sim, currentPlayerId, aiPlayerId, depth, alpha, beta, deadline) {
@@ -513,7 +608,7 @@ export default class SimpleAI {
     const cellSet = new Set()
 
     for (const cell of board.cells.values()) {
-      if (cell.ownerId) continue
+      if (cell.ownerId || cell.isObstacle) continue
 
       if (this.countClaimedEdges(board, cell) === cell.edgeIds.length - 2) {
         chainCells.push(cell)
@@ -561,7 +656,7 @@ export default class SimpleAI {
       for (const componentCell of cells) {
         for (const edgeId of componentCell.edgeIds) {
           const edge = board.getEdge(edgeId)
-          if (edge && !edge.ownerId) edgeToComponent.set(edgeId, component)
+          if (edge && this.isEdgePlayable(edge)) edgeToComponent.set(edgeId, component)
         }
       }
     }
@@ -577,7 +672,7 @@ export default class SimpleAI {
 
     for (const edgeId of cell.edgeIds) {
       const edge = board.getEdge(edgeId)
-      if (!edge || edge.ownerId) continue
+      if (!edge || !this.isEdgePlayable(edge)) continue
 
       for (const cellId of edge.adjacentCellIds) {
         if (cellId !== cell.id && allowedCellIds.has(cellId)) {
@@ -625,11 +720,11 @@ export default class SimpleAI {
     const result = []
 
     for (const edge of board.edges.values()) {
-      if (sim.claimedEdgeIds.has(edge.id)) continue
+      if (this.isEdgeClaimedInSimulation(edge, sim)) continue
 
       const closesCell = board.getAdjacentCellsByEdge(edge.id)
         .some(cell => {
-          if (sim.ownedCellIds.has(cell.id)) return false
+          if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) return false
           return this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1
         })
 
@@ -643,11 +738,11 @@ export default class SimpleAI {
     const result = []
 
     for (const edge of board.edges.values()) {
-      if (sim.claimedEdgeIds.has(edge.id)) continue
+      if (this.isEdgeClaimedInSimulation(edge, sim)) continue
 
       const makesThree = board.getAdjacentCellsByEdge(edge.id)
         .some(cell => {
-          if (sim.ownedCellIds.has(cell.id)) return false
+          if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) return false
           return this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 2
         })
 
@@ -661,7 +756,7 @@ export default class SimpleAI {
     let count = 0
 
     for (const cell of board.cells.values()) {
-      if (sim.ownedCellIds.has(cell.id)) continue
+      if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) continue
 
       if (this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1) {
         count++
@@ -676,7 +771,7 @@ export default class SimpleAI {
     const cellSet = new Set()
 
     for (const cell of board.cells.values()) {
-      if (sim.ownedCellIds.has(cell.id)) continue
+      if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) continue
 
       if (this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 2) {
         chainCells.push(cell)
@@ -725,7 +820,7 @@ export default class SimpleAI {
       for (const componentCell of cells) {
         for (const edgeId of componentCell.edgeIds) {
           const edge = board.getEdge(edgeId)
-          if (edge && !sim.claimedEdgeIds.has(edgeId)) {
+          if (edge && !this.isEdgeClaimedInSimulation(edge, sim)) {
             edgeToComponent.set(edgeId, component)
           }
         }
@@ -744,7 +839,7 @@ export default class SimpleAI {
 
     for (const edgeId of cell.edgeIds) {
       const edge = board.getEdge(edgeId)
-      if (!edge || sim.claimedEdgeIds.has(edge.id)) continue
+      if (!edge || this.isEdgeClaimedInSimulation(edge, sim)) continue
 
       for (const cellId of edge.adjacentCellIds) {
         if (cellId !== cell.id && allowedCellIds.has(cellId)) {
@@ -779,9 +874,9 @@ export default class SimpleAI {
     }
 
     for (const cell of board.cells.values()) {
-      if (!cell.ownerId) continue
+      if (!cell.ownerId || cell.isObstacle) continue
       if (!sim.scores[cell.ownerId]) sim.scores[cell.ownerId] = 0
-      sim.scores[cell.ownerId]++
+      sim.scores[cell.ownerId] += cell.isDoubleScore && cell.doubleScoreActivated ? 2 : 1
     }
 
     return sim
@@ -806,7 +901,9 @@ export default class SimpleAI {
     const closedCells = this.claimEdgeInSimulation(board, sim, edgeId)
 
     if (!sim.scores[playerId]) sim.scores[playerId] = 0
-    sim.scores[playerId] += closedCells.length
+    sim.scores[playerId] += closedCells.reduce((sum, cell) => (
+      sum + (cell.isDoubleScore && closedCells.length > 1 ? 2 : 1)
+    ), 0)
 
     return {
       closedCells,
@@ -818,7 +915,7 @@ export default class SimpleAI {
     const result = []
 
     for (const edge of board.edges.values()) {
-      if (!sim.claimedEdgeIds.has(edge.id)) result.push(edge)
+      if (!this.isEdgeClaimedInSimulation(edge, sim)) result.push(edge)
     }
 
     return result
@@ -837,7 +934,7 @@ export default class SimpleAI {
   getMoveOrderingScore(board, sim, edge) {
     const closingCells = board.getAdjacentCellsByEdge(edge.id)
       .filter(cell => {
-        if (sim.ownedCellIds.has(cell.id)) return false
+        if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) return false
 
         return this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1
       })
@@ -933,7 +1030,7 @@ export default class SimpleAI {
     const result = []
 
     for (const edge of board.edges.values()) {
-      if (!edge.ownerId) result.push(edge)
+      if (this.isEdgePlayable(edge)) result.push(edge)
     }
 
     return result
@@ -944,11 +1041,11 @@ export default class SimpleAI {
     const ownedCellIds = new Set()
 
     for (const edge of board.edges.values()) {
-      if (edge.ownerId) claimedEdgeIds.add(edge.id)
+      if (!this.isEdgePlayable(edge)) claimedEdgeIds.add(edge.id)
     }
 
     for (const cell of board.cells.values()) {
-      if (cell.ownerId) ownedCellIds.add(cell.id)
+      if (cell.ownerId || cell.isObstacle) ownedCellIds.add(cell.id)
     }
 
     return {
@@ -965,7 +1062,7 @@ export default class SimpleAI {
     const closedCells = []
 
     for (const cell of board.getAdjacentCellsByEdge(edgeId)) {
-      if (sim.ownedCellIds.has(cell.id)) continue
+      if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) continue
 
       if (this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length) {
         sim.ownedCellIds.add(cell.id)
@@ -999,11 +1096,11 @@ export default class SimpleAI {
     let bestClosedCount = 0
 
     for (const edge of board.edges.values()) {
-      if (sim.claimedEdgeIds.has(edge.id)) continue
+      if (this.isEdgeClaimedInSimulation(edge, sim)) continue
 
       const closedCount = board.getAdjacentCellsByEdge(edge.id)
         .filter(cell => {
-          if (sim.ownedCellIds.has(cell.id)) return false
+          if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) return false
 
           return this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 1
         })
@@ -1026,7 +1123,7 @@ export default class SimpleAI {
     let count = 0
 
     for (const cell of board.getAdjacentCellsByEdge(edge.id)) {
-      if (sim.ownedCellIds.has(cell.id)) continue
+      if (sim.ownedCellIds.has(cell.id) || cell.isObstacle) continue
 
       if (this.countClaimedEdgesInSimulation(cell, sim) === cell.edgeIds.length - 2) {
         count++
@@ -1094,10 +1191,18 @@ export default class SimpleAI {
 
     for (const edgeId of cell.edgeIds) {
       const edge = board.getEdge(edgeId)
-      if (edge.ownerId) count++
+      if (!this.isEdgePlayable(edge)) count++
     }
 
     return count
+  }
+
+  isEdgePlayable(edge) {
+    return !!edge && !edge.ownerId && !edge.isBlocked
+  }
+
+  isEdgeClaimedInSimulation(edge, sim) {
+    return !this.isEdgePlayable(edge) || sim.claimedEdgeIds.has(edge.id)
   }
 
   pickRandom(list) {

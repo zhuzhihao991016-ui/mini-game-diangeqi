@@ -1,23 +1,148 @@
 export default class BoardRenderer {
   constructor(ctx) {
     this.ctx = ctx
+    this.obstacleColor = '#4A4A4A'
   }
 
   draw({ board, originX, originY, cellSize, animationManager, highlightedEdgeId = null }) {
     if (board.type === 'hex') {
       this.drawHex(board, originX, originY, cellSize, animationManager, highlightedEdgeId)
+    } else if (board.type === 'mixed-shape') {
+      this.drawMixedShape(board, originX, originY, cellSize, animationManager, highlightedEdgeId)
     } else {
+      this.drawSpecialCells({ board, originX, originY, cellSize })
       this.drawCells({ board, originX, originY, cellSize, animationManager })
       this.drawEdges({ board, originX, originY, cellSize, animationManager, highlightedEdgeId })
       this.drawPoints({ board, originX, originY, cellSize })
     }
   }
 
+  drawMixedShape(board, originX, originY, cellSize, animationManager, highlightedEdgeId = null) {
+    this.drawMixedShapeSpecialCells(board, originX, originY, cellSize)
+    this.drawMixedShapeCells(board, originX, originY, cellSize, animationManager)
+    this.drawMixedShapeEdges(board, originX, originY, cellSize, animationManager, highlightedEdgeId)
+    this.drawMixedShapePoints(board, originX, originY, cellSize)
+  }
+
+  getMixedShapePoint(point, originX, originY, cellSize) {
+    return {
+      x: originX + point.unitX * cellSize,
+      y: originY + point.unitY * cellSize
+    }
+  }
+
+  getMixedShapeEdgeLine(edge, originX, originY, cellSize) {
+    return {
+      x1: originX + edge.unitX1 * cellSize,
+      y1: originY + edge.unitY1 * cellSize,
+      x2: originX + edge.unitX2 * cellSize,
+      y2: originY + edge.unitY2 * cellSize
+    }
+  }
+
+  drawMixedShapeSpecialCells(board, originX, originY, cellSize) {
+    for (const cell of board.cells.values()) {
+      if (!cell.isDoubleScore) continue
+      const center = this.getMixedShapePoint(cell.center, originX, originY, cellSize)
+      this.drawDoubleScoreLabel(center.x, center.y, cellSize)
+    }
+  }
+
+  drawMixedShapeCells(board, originX, originY, cellSize, animationManager) {
+    const ctx = this.ctx
+
+    for (const cell of board.cells.values()) {
+      if (!cell.ownerId || !Array.isArray(cell.points)) continue
+
+      const progress = animationManager
+        ? animationManager.getCellProgress(cell.id)
+        : 1
+      const center = this.getMixedShapePoint(cell.center, originX, originY, cellSize)
+      const points = cell.points.map(point => {
+        const screenPoint = this.getMixedShapePoint(point, originX, originY, cellSize)
+        return {
+          x: center.x + (screenPoint.x - center.x) * progress,
+          y: center.y + (screenPoint.y - center.y) * progress
+        }
+      })
+
+      ctx.save()
+      ctx.globalAlpha = cell.isDoubleScore && cell.doubleScoreActivated ? 0.36 : 0.25
+      ctx.fillStyle = this.getPlayerColor(cell.ownerId)
+      ctx.beginPath()
+      ctx.moveTo(points[0].x, points[0].y)
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y)
+      }
+      ctx.closePath()
+      ctx.fill()
+      ctx.restore()
+    }
+  }
+
+  drawMixedShapeEdges(board, originX, originY, cellSize, animationManager, highlightedEdgeId = null) {
+    for (const edge of board.edges.values()) {
+      const line = this.getMixedShapeEdgeLine(edge, originX, originY, cellSize)
+
+      if (!edge.ownerId) {
+        if (edge.id === highlightedEdgeId) {
+          this.drawHighlightedEdge(line)
+        } else {
+          this.drawEmptyEdge(line)
+        }
+        continue
+      }
+
+      const progress = animationManager
+        ? animationManager.getEdgeProgress(edge.id)
+        : 1
+
+      this.drawClaimedEdge(line, edge.ownerId, progress)
+    }
+  }
+
+  drawMixedShapePoints(board, originX, originY, cellSize) {
+    const ctx = this.ctx
+    const pointSet = new Set()
+
+    for (const edge of board.edges.values()) {
+      const line = this.getMixedShapeEdgeLine(edge, originX, originY, cellSize)
+      pointSet.add(`${line.x1.toFixed(1)}_${line.y1.toFixed(1)}`)
+      pointSet.add(`${line.x2.toFixed(1)}_${line.y2.toFixed(1)}`)
+    }
+
+    ctx.fillStyle = '#333'
+
+    pointSet.forEach(value => {
+      const [x, y] = value.split('_').map(Number)
+      ctx.beginPath()
+      ctx.arc(x, y, 4, 0, Math.PI * 2)
+      ctx.fill()
+    })
+  }
+
 drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = null) {
+  this.drawHexSpecialCells(board, originX, originY, size)
   this.drawHexCells(board, originX, originY, size, animationManager)
   this.drawHexEdges(board, originX, originY, size, animationManager, highlightedEdgeId)
   this.drawHexPoints(board, originX, originY, size)
 }
+
+  drawSpecialCells({ board, originX, originY, cellSize }) {
+    for (const cell of board.cells.values()) {
+      const x = originX + cell.x * cellSize
+      const y = originY + cell.y * cellSize
+
+      if (cell.isObstacle) {
+        this.drawObstacleCellRect(x, y, cellSize, cellSize)
+        continue
+      }
+
+      if (cell.isDoubleScore) {
+        this.drawDoubleScoreLabel(x + cellSize / 2, y + cellSize / 2, cellSize)
+      }
+    }
+  }
 
   drawCells({ board, originX, originY, cellSize, animationManager }) {
     for (const cell of board.cells.values()) {
@@ -53,6 +178,9 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
     ctx.save()
     ctx.globalAlpha = 0.25
+    if (cell.isDoubleScore && cell.doubleScoreActivated) {
+      ctx.globalAlpha = 0.36
+    }
     ctx.fillStyle = color
     this.roundRect(ctx, x, y, size, size, radius)
     ctx.fill()
@@ -62,6 +190,16 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
   drawEdges({ board, originX, originY, cellSize, animationManager, highlightedEdgeId = null }) {
     for (const edge of board.edges.values()) {
       const line = this.getEdgeLine(edge, originX, originY, cellSize)
+
+      if (edge.isObstacleEdge) {
+        this.drawObstacleEdge(line)
+        continue
+      }
+
+      if (edge.isBlocked) {
+        this.drawBlockedCellEdge(line)
+        continue
+      }
 
       if (!edge.ownerId) {
         if (edge.id === highlightedEdgeId) {
@@ -149,6 +287,24 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     }
   }
 
+  drawObstacleEdge(line) {
+    this.drawBlockedCellEdge(line, 6)
+  }
+
+  drawBlockedCellEdge(line, lineWidth = 5) {
+    const ctx = this.ctx
+
+    ctx.save()
+    ctx.strokeStyle = this.obstacleColor
+    ctx.lineWidth = lineWidth
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(line.x1, line.y1)
+    ctx.lineTo(line.x2, line.y2)
+    ctx.stroke()
+    ctx.restore()
+  }
+
   getEdgeLine(edge, originX, originY, cellSize) {
     if (edge.type === 'horizontal') {
       return {
@@ -173,6 +329,35 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     if (playerId === 'p3') return '#2ecc71'
     if (playerId === 'p4') return '#f1c40f'
     return '#333'
+  }
+
+  drawDoubleScoreLabel(cx, cy, size) {
+    const ctx = this.ctx
+
+    ctx.save()
+    ctx.fillStyle = '#1F7AE0'
+    ctx.font = `bold ${Math.max(22, Math.floor(size * 0.46))}px Arial`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('X2', cx, cy + 1)
+    ctx.restore()
+  }
+
+  drawObstacleCellRect(x, y, width, height) {
+    const ctx = this.ctx
+    const pad = Math.max(5, Math.min(width, height) * 0.18)
+
+    ctx.save()
+    ctx.strokeStyle = this.obstacleColor
+    ctx.lineWidth = Math.max(6, Math.min(width, height) * 0.12)
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(x + pad, y + pad)
+    ctx.lineTo(x + width - pad, y + height - pad)
+    ctx.moveTo(x + width - pad, y + pad)
+    ctx.lineTo(x + pad, y + height - pad)
+    ctx.stroke()
+    ctx.restore()
   }
 
   hexToPixel(q, r, size) {
@@ -201,6 +386,16 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       const line = this.getHexEdgeLine(edge, originX, originY, size)
   
       if (!line) continue
+
+      if (edge.isObstacleEdge) {
+        this.drawObstacleEdge(line)
+        continue
+      }
+
+      if (edge.isBlocked) {
+        this.drawBlockedCellEdge(line)
+        continue
+      }
   
       if (!edge.ownerId) {
         if (edge.id === highlightedEdgeId) {
@@ -240,6 +435,36 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     }
   }
 
+  drawHexSpecialCells(board, originX, originY, size) {
+    const ctx = this.ctx
+
+    for (const cell of board.cells.values()) {
+      const center = this.hexToPixel(cell.x, cell.y, size)
+      const cx = center.x + originX
+      const cy = center.y + originY
+
+      if (cell.isObstacle) {
+        const corners = this.getHexCorners(cx, cy, size * 0.82)
+
+        ctx.save()
+        ctx.beginPath()
+        ctx.moveTo(corners[0].x, corners[0].y)
+        for (let i = 1; i < corners.length; i++) {
+          ctx.lineTo(corners[i].x, corners[i].y)
+        }
+        ctx.closePath()
+        ctx.clip()
+        this.drawObstacleCellRect(cx - size * 0.7, cy - size * 0.62, size * 1.4, size * 1.24)
+        ctx.restore()
+        continue
+      }
+
+      if (cell.isDoubleScore) {
+        this.drawDoubleScoreLabel(cx, cy, size)
+      }
+    }
+  }
+
   drawHexCells(board, originX, originY, size, animationManager) {
     const ctx = this.ctx
   
@@ -260,6 +485,9 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       ctx.save()
       ctx.globalAlpha = 0.25
       ctx.fillStyle = this.getPlayerColor(cell.ownerId)
+      if (cell.isDoubleScore && cell.doubleScoreActivated) {
+        ctx.globalAlpha = 0.36
+      }
   
       ctx.beginPath()
       ctx.moveTo(corners[0].x, corners[0].y)
