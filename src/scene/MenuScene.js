@@ -5,10 +5,21 @@ import OnlineRoomScene from './OnlineRoomScene'
 import { getSceneSafeLayout } from '../utils/SafeArea'
 import { createChallengeLevels } from '../core/level/ChallengeLevels'
 import { getUnlockedChallengeLevel } from '../state/ChallengeProgress'
+import UITheme from '../ui/theme'
+import { drawImageAsset, getImageAsset, preloadImageAssets } from '../assets/ImageAssets'
+import SoundEffects from '../assets/SoundEffects'
+import { getGameSettings, updateGameSettings } from '../state/SettingsState'
 
-const BRAND_COLOR = '#4A90E2'
-const DANGER_COLOR = '#E24A4A'
-const TEXT_COLOR = '#222222'
+const BRAND_COLOR = UITheme.colors.primary
+const DANGER_COLOR = UITheme.colors.danger
+const TEXT_COLOR = UITheme.colors.text
+const REDEEM_STORAGE_KEY = 'dots_boxes_redeemed_codes'
+const REDEEM_CODES = {
+  DOTS2026: {
+    type: 'unlock_challenge',
+    message: '\u5df2\u89e3\u9501\u5168\u90e8\u95ef\u5173\u5173\u5361'
+  }
+}
 
 const T = {
   loginFallback: '\u767b\u5f55\u5931\u8d25\uff0c\u6682\u7528\u672c\u5730\u8eab\u4efd',
@@ -83,7 +94,10 @@ export default class MenuScene extends BaseScene {
     this.selectedLeaderboardKey = 'inferno-3x3'
     this.challengeLevels = []
     this.unlockedChallengeLevel = 1
+    this.challengeSelectPage = 0
+    this.settingsControls = []
     this.safeLayout = getSceneSafeLayout(this.width, this.height)
+    preloadImageAssets()
   }
 
   y(value) {
@@ -97,6 +111,10 @@ export default class MenuScene extends BaseScene {
   onEnter() {
     this.inputManager.clearTouchStartHandlers()
     this.inputManager.onTouchStart((x, y) => {
+      if (this.page === 'settings' && this.handleSettingsTouch(x, y)) {
+        return
+      }
+
       for (const button of this.buttons) {
         if (button.hitTest(x, y)) {
           button.click()
@@ -121,12 +139,12 @@ export default class MenuScene extends BaseScene {
   render() {
     const ctx = this.ctx
 
-    ctx.fillStyle = '#EFEFEF'
-    ctx.fillRect(0, 0, this.width, this.height)
+    this.drawBackground()
     this.drawTitleCard()
     this.drawSubtitle()
     if (this.page === 'leaderboard') this.drawLeaderboard()
     if (this.page === 'challenge-select') this.drawChallengeSelect()
+    if (this.page === 'settings') this.drawSettingsPanel()
     if (this.page === 'home') this.drawUserPanel()
     for (const button of this.buttons) button.draw(ctx)
     if (this.toastTimer > 0) this.drawToast()
@@ -135,22 +153,31 @@ export default class MenuScene extends BaseScene {
   buildHomeButtons() {
     this.page = 'home'
     this.buttons = []
+    this.settingsControls = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 54
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const mainCount = 5
+    const quickY = this.bottomY(56)
+    const minGap = 8
+    const preferredGap = UITheme.menu.gap
+    const maxStartY = quickY - mainCount * h - (mainCount - 1) * minGap - 16
+    const startY = Math.max(this.y(248), Math.min(this.y(270), maxStartY))
+    const gap = Math.max(minGap, Math.min(preferredGap, (quickY - startY - mainCount * h - 16) / (mainCount - 1)))
 
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(290), width: w, height: h, text: T.start, accentColor: BRAND_COLOR, onClick: () => { this.selectedPlayStyle = 'classic'; this.buildModeButtons() } }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(354), width: w, height: h, text: T.funMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedPlayStyle = 'fun'; this.buildModeButtons() } }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(418), width: w, height: h, text: T.challengeMode, accentColor: BRAND_COLOR, onClick: () => this.buildChallengeSelectButtons() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(482), width: w, height: h, text: T.editName, accentColor: BRAND_COLOR, onClick: () => this.changeNickname() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(546), width: w, height: h, text: T.leaderboard, accentColor: BRAND_COLOR, onClick: () => this.buildLeaderboardButtons() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY, width: w, height: h, text: T.start, accentColor: BRAND_COLOR, variant: 'solid', icon: 'grid', onClick: () => { this.selectedPlayStyle = 'classic'; this.buildModeButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + (h + gap), width: w, height: h, text: T.funMode, accentColor: UITheme.colors.secondary, variant: 'solid', icon: 'star', onClick: () => { this.selectedPlayStyle = 'fun'; this.buildModeButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + (h + gap) * 2, width: w, height: h, text: T.challengeMode, accentColor: UITheme.colors.purple, variant: 'solid', icon: 'flag', onClick: () => this.buildChallengeSelectButtons() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + (h + gap) * 3, width: w, height: h, text: T.onlineMode, accentColor: UITheme.colors.warning, variant: 'solid', icon: 'globe', onClick: () => { this.selectedPlayStyle = 'classic'; this.selectedMode = 'online'; this.selectedBoardType = 'square'; this.buildSquareSizeButtons() } }))
     this.buttons.push(this.createCard({
       x: cx - w / 2,
-      y: this.y(610),
+      y: startY + (h + gap) * 4,
       width: w,
       height: h,
       text: T.tutorial,
       accentColor: BRAND_COLOR,
+      variant: 'solid',
+      icon: 'book',
       onClick: () => this.sceneManager.setScene(new TutorialScene({
         canvas: this.canvas,
         ctx: this.ctx,
@@ -160,6 +187,18 @@ export default class MenuScene extends BaseScene {
         height: this.height
       }))
     }))
+    const quickGap = UITheme.menu.compactGap
+    const quickW = (w - quickGap) / 2
+    const quickButtonY = this.bottomY(56)
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: quickButtonY, width: quickW, height: UITheme.menu.compactH, text: T.leaderboard, accentColor: UITheme.colors.warning, variant: 'solid', compact: true, icon: 'trophy', onClick: () => this.buildLeaderboardButtons() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2 + quickW + quickGap, y: quickButtonY, width: quickW, height: UITheme.menu.compactH, text: '\u8bbe\u7f6e', accentColor: UITheme.colors.muted, variant: 'solid', compact: true, icon: 'gear', onClick: () => this.buildSettingsButtons() }))
+  }
+
+  buildSettingsButtons() {
+    this.page = 'settings'
+    this.buttons = []
+    this.settingsControls = this.createSettingsControls()
+    this.buttons.push(this.createBackCard(() => this.buildHomeButtons()))
   }
 
   buildLeaderboardButtons() {
@@ -179,15 +218,64 @@ export default class MenuScene extends BaseScene {
         x: 20 + index * (tabW + gap),
         y: tabY,
         width: tabW,
-        height: 42,
+        height: UITheme.menu.compactH,
         text: tab.text,
         accentColor: this.selectedLeaderboardKey === tab.key ? BRAND_COLOR : '#BBBBBB',
+        compact: true,
         onClick: () => this.switchLeaderboard(tab.key)
       }))
     })
     this.buttons.push(this.createBackCard(() => this.buildHomeButtons()))
 
     this.refreshLeaderboard()
+  }
+
+  drawBackground() {
+    const ctx = this.ctx
+    if (this.drawMenuBackgroundImage(ctx)) return
+
+    ctx.fillStyle = UITheme.colors.background
+    ctx.fillRect(0, 0, this.width, this.height)
+
+    ctx.save()
+    ctx.strokeStyle = '#D9F0FF'
+    ctx.lineWidth = 1
+    for (let x = 22; x < this.width; x += 34) {
+      for (let y = this.y(66); y < this.height; y += 34) {
+        ctx.globalAlpha = 0.24
+        ctx.beginPath()
+        ctx.arc(x, y, 1.2, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+  }
+
+  drawMenuBackgroundImage(ctx) {
+    const image = getImageAsset('menuBackground')
+    if (!image || image.failed || !image.loaded) return false
+
+    const imageRatio = image.width / image.height
+    const canvasRatio = this.width / this.height
+    let drawW = this.width
+    let drawH = this.height
+    let drawX = 0
+    let drawY = 0
+
+    if (imageRatio > canvasRatio) {
+      drawH = this.height
+      drawW = drawH * imageRatio
+      drawX = (this.width - drawW) / 2
+    } else {
+      drawW = this.width
+      drawH = drawW / imageRatio
+      drawY = (this.height - drawH) / 2
+    }
+
+    ctx.drawImage(image, drawX, drawY, drawW, drawH)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'
+    ctx.fillRect(0, 0, this.width, this.height)
+    return true
   }
 
   switchLeaderboard(boardKey) {
@@ -214,12 +302,14 @@ export default class MenuScene extends BaseScene {
     this.page = 'mode'
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const startY = this.getVerticalListStartY(3, h, UITheme.menu.gap, this.y(174))
+    const gap = this.getVerticalListGap(startY, 3, h, UITheme.menu.gap, UITheme.menu.gap)
 
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195), width: w, height: h, text: T.aiMode, accentColor: BRAND_COLOR, onClick: () => this.selectAiMode() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(268), width: w, height: h, text: T.onlineMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'online'; this.selectedBoardType = 'square'; this.buildBoardButtons() } }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(341), width: w, height: h, text: T.localMode, accentColor: BRAND_COLOR, onClick: () => { this.selectedMode = 'local_2p'; this.buildBoardButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY, width: w, height: h, text: T.aiMode, subText: '\u4e0e AI \u5bf9\u6218', accentColor: BRAND_COLOR, icon: 'robot', onClick: () => this.selectAiMode() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + h + gap, width: w, height: h, text: T.localMode, subText: '\u540c\u5c4f\u5bf9\u6218', accentColor: UITheme.colors.secondary, icon: 'players', onClick: () => { this.selectedMode = 'local_2p'; this.buildBoardButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + (h + gap) * 2, width: w, height: h, text: T.onlineMode, subText: '\u5728\u7ebf\u5339\u914d\u6216\u9080\u8bf7\u597d\u53cb', accentColor: UITheme.colors.danger, icon: 'globe', onClick: () => { this.selectedMode = 'online'; this.selectedBoardType = 'square'; this.buildSquareSizeButtons() } }))
     this.buttons.push(this.createBackCard(() => this.buildHomeButtons()))
   }
 
@@ -239,8 +329,10 @@ export default class MenuScene extends BaseScene {
     this.page = 'difficulty'
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const startY = this.getVerticalListStartY(3, h, UITheme.menu.gap, this.y(174))
+    const gap = this.getVerticalListGap(startY, 3, h, UITheme.menu.gap, UITheme.menu.gap)
     const difficulties = [
       { text: T.easyAi, value: 'easy' },
       { text: T.hardAi, value: 'hard' },
@@ -248,7 +340,8 @@ export default class MenuScene extends BaseScene {
     ]
 
     difficulties.forEach((item, index) => {
-      this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195 + index * 73), width: w, height: h, text: item.text, accentColor: BRAND_COLOR, onClick: () => { this.selectedAiDifficulty = item.value; this.buildBoardButtons() } }))
+      const colors = [UITheme.colors.secondary, UITheme.colors.warning, UITheme.colors.danger]
+      this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + index * (h + gap), width: w, height: h, text: item.text, accentColor: colors[index], icon: item.value === 'inferno' ? 'devil' : 'robot', onClick: () => { this.selectedAiDifficulty = item.value; this.buildBoardButtons() } }))
     })
     this.buttons.push(this.createBackCard(() => this.buildModeButtons()))
   }
@@ -257,11 +350,13 @@ export default class MenuScene extends BaseScene {
     this.page = 'board'
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const startY = this.getVerticalListStartY(2, h, UITheme.menu.gap, this.y(174))
+    const gap = this.getVerticalListGap(startY, 2, h, UITheme.menu.gap, UITheme.menu.gap)
 
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195), width: w, height: h, text: T.square, accentColor: BRAND_COLOR, onClick: () => { this.selectedBoardType = 'square'; this.isFunModeSelected() ? this.startGame(6, 6) : this.buildSquareSizeButtons() } }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(268), width: w, height: h, text: T.hex, accentColor: BRAND_COLOR, onClick: () => { this.selectedBoardType = 'hex'; this.startHexGame() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY, width: w, height: h, text: T.square, accentColor: BRAND_COLOR, icon: 'grid', onClick: () => { this.selectedBoardType = 'square'; this.isFunModeSelected() ? this.startGame(6, 6) : this.buildSquareSizeButtons() } }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + h + gap, width: w, height: h, text: T.hex, accentColor: UITheme.colors.purple, icon: 'hex', onClick: () => { this.selectedBoardType = 'hex'; this.startHexGame() } }))
     this.buttons.push(this.createBackCard(() => {
       if (this.selectedMode === 'ai' && !this.isFunModeSelected()) {
         this.buildDifficultyButtons()
@@ -275,8 +370,8 @@ export default class MenuScene extends BaseScene {
     this.page = 'board'
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
     const sizes = [
       { text: T.size3, rows: 3, cols: 3 },
       { text: T.size6, rows: 6, cols: 6 },
@@ -289,8 +384,10 @@ export default class MenuScene extends BaseScene {
     }
 
     if (this.selectedMode === 'online') sizes.splice(2)
+    const startY = this.getVerticalListStartY(sizes.length, h, UITheme.menu.gap, this.y(174))
+    const gap = this.getVerticalListGap(startY, sizes.length, h, UITheme.menu.gap, UITheme.menu.gap)
     sizes.forEach((item, index) => {
-      this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(195 + index * 73), width: w, height: h, text: item.text, accentColor: BRAND_COLOR, onClick: () => this.startGame(item.rows, item.cols) }))
+      this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + index * (h + gap), width: w, height: h, text: item.text, accentColor: index === 0 ? BRAND_COLOR : UITheme.colors.secondary, icon: 'grid', onClick: () => this.startGame(item.rows, item.cols) }))
     })
     this.buttons.push(this.createBackCard(() => this.selectedMode === 'online' ? this.buildModeButtons() : this.buildBoardButtons()))
   }
@@ -304,23 +401,100 @@ export default class MenuScene extends BaseScene {
     if (!nickname) return
     await this.userManager.updateNickname(nickname)
     this.showToast(T.nameUpdated)
-    this.buildHomeButtons()
+    if (this.page === 'settings') {
+      this.buildSettingsButtons()
+    } else {
+      this.buildHomeButtons()
+    }
   }
 
-  buildChallengeSelectButtons() {
+  async redeemCode() {
+    const code = await this.promptRedeemCode()
+    if (!code) return
+    if (code === 'INVALID') {
+      this.showToast('\u5151\u6362\u7801\u683c\u5f0f\u65e0\u6548')
+      return
+    }
+
+    const redeemedCodes = this.getRedeemedCodes()
+    if (redeemedCodes.includes(code)) {
+      this.showToast('\u5151\u6362\u7801\u5df2\u4f7f\u7528')
+      return
+    }
+
+    const reward = REDEEM_CODES[code]
+    if (!reward) {
+      this.showToast('\u5151\u6362\u7801\u65e0\u6548')
+      return
+    }
+
+    if (reward.type === 'unlock_challenge') {
+      const challengeLevels = this.createChallengeLevelsForMenu()
+      unlockChallengeLevel(challengeLevels.length, challengeLevels.length)
+      this.unlockedChallengeLevel = getUnlockedChallengeLevel(challengeLevels.length)
+    }
+
+    this.saveRedeemedCodes([...redeemedCodes, code])
+    this.showToast(reward.message)
+  }
+
+  promptRedeemCode() {
+    return new Promise(resolve => {
+      wx.showModal({
+        title: '\u5151\u6362\u7801',
+        editable: true,
+        placeholderText: '\u8bf7\u8f93\u5165\u5151\u6362\u7801',
+        success: res => {
+          if (!res.confirm || !res.content) {
+            resolve('')
+            return
+          }
+
+          const code = `${res.content}`.trim().toUpperCase()
+          resolve(/^[A-Z0-9-]{4,24}$/.test(code) ? code : 'INVALID')
+        },
+        fail: () => resolve('')
+      })
+    })
+  }
+
+  getRedeemedCodes() {
+    try {
+      const value = wx.getStorageSync(REDEEM_STORAGE_KEY)
+      return Array.isArray(value) ? value : []
+    } catch (err) {
+      return []
+    }
+  }
+
+  saveRedeemedCodes(codes) {
+    try {
+      wx.setStorageSync(REDEEM_STORAGE_KEY, codes)
+    } catch (err) {
+      console.warn('save redeemed codes failed:', err)
+    }
+  }
+
+  buildChallengeSelectButtons(page = 0) {
     this.page = 'challenge-select'
     this.challengeLevels = this.createChallengeLevelsForMenu()
     this.unlockedChallengeLevel = getUnlockedChallengeLevel(this.challengeLevels.length)
     this.buttons = []
 
-    const cols = 4
+    const cols = 6
+    const rows = 5
+    const perPage = cols * rows
+    const maxPage = Math.max(0, Math.ceil(this.challengeLevels.length / perPage) - 1)
+    this.challengeSelectPage = Math.max(0, Math.min(maxPage, page))
+    const pageStart = this.challengeSelectPage * perPage
+    const visibleLevels = this.challengeLevels.slice(pageStart, pageStart + perPage)
     const gap = 8
     const gridX = 24
-    const gridY = this.y(274)
+    const gridY = this.y(272)
     const cellW = (this.width - gridX * 2 - gap * (cols - 1)) / cols
-    const cellH = 48
+    const cellH = 42
 
-    this.challengeLevels.forEach((level, index) => {
+    visibleLevels.forEach((level, index) => {
       const col = index % cols
       const row = Math.floor(index / cols)
       const unlocked = level.index <= this.unlockedChallengeLevel
@@ -341,6 +515,35 @@ export default class MenuScene extends BaseScene {
         }
       }))
     })
+
+    const pagerY = gridY + rows * (cellH + gap) + 12
+    const pagerW = 92
+    const pagerH = UITheme.menu.compactH
+    if (this.challengeSelectPage > 0) {
+      this.buttons.push(this.createCard({
+        x: 24,
+        y: pagerY,
+        width: pagerW,
+        height: pagerH,
+        text: '\u4e0a\u4e00\u9875',
+        accentColor: UITheme.colors.muted,
+        compact: true,
+        onClick: () => this.buildChallengeSelectButtons(this.challengeSelectPage - 1)
+      }))
+    }
+
+    if (this.challengeSelectPage < maxPage) {
+      this.buttons.push(this.createCard({
+        x: this.width - 24 - pagerW,
+        y: pagerY,
+        width: pagerW,
+        height: pagerH,
+        text: '\u4e0b\u4e00\u9875',
+        accentColor: UITheme.colors.primary,
+        compact: true,
+        onClick: () => this.buildChallengeSelectButtons(this.challengeSelectPage + 1)
+      }))
+    }
 
     this.buttons.push(this.createBackCard(() => this.buildHomeButtons()))
   }
@@ -418,6 +621,12 @@ export default class MenuScene extends BaseScene {
   }
 
   startHexGame() {
+    if (this.selectedMode === 'online') {
+      this.selectedBoardType = 'square'
+      this.buildSquareSizeButtons()
+      return
+    }
+
     this.sceneManager.setScene(new BattleScene({
       canvas: this.canvas,
       ctx: this.ctx,
@@ -445,30 +654,35 @@ export default class MenuScene extends BaseScene {
 
   drawTitleCard() {
     const ctx = this.ctx
-    const cardW = this.width - 40
-    const cardH = 90
-    const cardX = 20
-    const cardY = this.y(70)
+    this.drawTopBar()
 
-    this.roundRect(ctx, cardX, cardY, cardW, cardH, 5)
-    ctx.fillStyle = '#FFFFFF'
-    ctx.fill()
-    this.roundRectLeft(ctx, cardX, cardY, 6, cardH, 14)
-    ctx.fillStyle = BRAND_COLOR
-    ctx.fill()
-    ctx.fillStyle = TEXT_COLOR
-    ctx.font = 'bold 30px Arial'
+    if (this.page !== 'home') {
+      ctx.fillStyle = UITheme.colors.text
+      ctx.font = 'bold 18px Arial'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(this.getPageTitle(), this.width / 2, this.safeLayout.top + 17)
+      return
+    }
+
+    const topY = Math.max(this.y(64), this.safeLayout.top + 48)
+    drawImageAsset(ctx, 'crown', this.width / 2 - 25, topY, 50, 50)
+
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(T.title, this.width / 2, cardY + cardH / 2 - 10)
-    ctx.fillStyle = BRAND_COLOR
-    ctx.font = '13px Arial'
-    ctx.fillText('Dots and Boxes', this.width / 2, cardY + cardH / 2 + 16)
+
+    ctx.fillStyle = '#1B85D8'
+    ctx.font = '900 44px Arial'
+    ctx.fillText('\u5708\u5730\u4e3a\u738b', this.width / 2, topY + 78)
+
+    ctx.fillStyle = '#FF7A1A'
+    ctx.font = '900 26px Arial'
+    ctx.fillText('\u70b9\u683c\u68cb', this.width / 2, topY + 120)
   }
 
   drawSubtitle() {
-    const subtitleMap = { difficulty: T.difficulty, home: T.playStyle, mode: T.mode, board: T.board, leaderboard: this.getLeaderboardTitle(), 'challenge-select': T.challengeSelect }
-    this.ctx.fillStyle = '#999999'
+    const subtitleMap = { difficulty: '', home: '', mode: '', board: '', leaderboard: '', 'challenge-select': '' }
+    this.ctx.fillStyle = UITheme.colors.muted
     this.ctx.font = '14px Arial'
     this.ctx.textAlign = 'center'
     this.ctx.textBaseline = 'middle'
@@ -478,27 +692,20 @@ export default class MenuScene extends BaseScene {
   drawUserPanel() {
     const ctx = this.ctx
     const x = 20
-    const y = this.y(205)
-    const w = this.width - 40
-    const h = 72
+    const y = this.safeLayout.top
+    const h = 36
+    const rightLimit = this.safeLayout.menuButton
+      ? Math.max(this.width * 0.56, this.safeLayout.menuButton.left - 12)
+      : this.width - 12
     const profile = this.userManager ? this.userManager.profile : null
     const nickname = profile && profile.nickname ? profile.nickname : T.player
-    const playerId = profile && profile.playerId ? profile.playerId : T.loggingIn
 
-    this.roundRect(ctx, x, y, w, h, 6)
-    ctx.fillStyle = '#FFFFFF'
-    ctx.fill()
-    this.roundRectLeft(ctx, x, y, 6, h, 12)
-    ctx.fillStyle = BRAND_COLOR
-    ctx.fill()
+    this.drawAvatar(ctx, x + 18, y + h / 2, BRAND_COLOR)
     ctx.fillStyle = TEXT_COLOR
-    ctx.font = 'bold 17px Arial'
+    ctx.font = 'bold 13px Arial'
     ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
-    ctx.fillText(`${T.nicknameLabel}${nickname}`, x + 18, y + 24)
-    ctx.fillStyle = '#777777'
-    ctx.font = '12px Arial'
-    ctx.fillText(`${T.playerIdLabel}${playerId}`, x + 18, y + 50)
+    this.drawFittedText(ctx, nickname, x + 42, y + h / 2, Math.max(72, rightLimit - x - 54), 13, 9, 'bold', 'left')
   }
 
   drawLeaderboard() {
@@ -511,25 +718,24 @@ export default class MenuScene extends BaseScene {
       ? this.leaderboardManager.getRecords(8, this.selectedLeaderboardKey)
       : []
 
-    this.roundRect(ctx, x, y, w, h, 6)
-    ctx.fillStyle = '#FFFFFF'
+    this.roundRect(ctx, x, y, w, h, UITheme.radius.md)
+    ctx.fillStyle = UITheme.colors.surface
     ctx.fill()
-    this.roundRectLeft(ctx, x, y, 6, h, 12)
-    ctx.fillStyle = BRAND_COLOR
-    ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
 
     ctx.fillStyle = TEXT_COLOR
     ctx.font = 'bold 18px Arial'
     ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
-    ctx.fillText(this.getLeaderboardTitle(), x + 18, y + 30)
+    this.drawFittedText(ctx, this.getLeaderboardTitle(), x + 18, y + 30, w - 36, 18, 12, 'bold', 'left')
 
-    ctx.fillStyle = '#777777'
-    ctx.font = '12px Arial'
-    ctx.fillText(this.isChallengeLeaderboard() ? T.leaderboardChallengeHint : T.leaderboardHint, x + 18, y + 54)
+    ctx.fillStyle = UITheme.colors.muted
+    this.drawFittedText(ctx, this.isChallengeLeaderboard() ? T.leaderboardChallengeHint : T.leaderboardHint, x + 18, y + 54, w - 36, 12, 9, '', 'left')
 
     if (this.leaderboardLoading && records.length === 0) {
-      ctx.fillStyle = '#999999'
+      ctx.fillStyle = UITheme.colors.muted
       ctx.font = '15px Arial'
       ctx.textAlign = 'center'
       ctx.fillText(T.leaderboardLoading, this.width / 2, y + h / 2 + 20)
@@ -537,7 +743,7 @@ export default class MenuScene extends BaseScene {
     }
 
     if (records.length === 0) {
-      ctx.fillStyle = '#999999'
+      ctx.fillStyle = UITheme.colors.muted
       ctx.font = '15px Arial'
       ctx.textAlign = 'center'
       ctx.fillText(T.leaderboardEmpty, this.width / 2, y + h / 2 + 20)
@@ -552,26 +758,27 @@ export default class MenuScene extends BaseScene {
       const rank = index + 1
       const failures = record.failuresBeforeClear || 0
 
-      ctx.fillStyle = index % 2 === 0 ? '#F7FAFF' : '#FFFFFF'
-      ctx.fillRect(x + 10, rowY - 14, w - 20, rowH - 2)
+      this.roundRect(ctx, x + 10, rowY - 14, w - 20, rowH - 2, 6)
+      ctx.fillStyle = index % 2 === 0 ? UITheme.colors.primaryLight : UITheme.colors.surface
+      ctx.fill()
 
       ctx.fillStyle = BRAND_COLOR
       ctx.font = 'bold 14px Arial'
       ctx.textAlign = 'left'
       ctx.fillText(`${rank}.`, x + 18, rowY + 1)
 
-      ctx.fillStyle = TEXT_COLOR
-      ctx.font = 'bold 14px Arial'
-      ctx.fillText(record.nickname || T.player, x + 50, rowY + 1)
-
-      ctx.fillStyle = '#666666'
+      ctx.fillStyle = UITheme.colors.muted
       ctx.font = '13px Arial'
       ctx.textAlign = 'right'
-      if (this.isChallengeLeaderboard()) {
-        ctx.fillText(`${T.challengeRankValue} ${record.bestLevel || 0}  ${T.challengeScoreValue} ${record.bestScore || 0}`, x + w - 18, rowY + 1)
-      } else {
-        ctx.fillText(`${T.failuresBeforeClear} ${failures}`, x + w - 18, rowY + 1)
-      }
+      const rightText = this.isChallengeLeaderboard()
+        ? `${T.challengeRankValue} ${record.bestLevel || 0}  ${T.challengeScoreValue} ${record.bestScore || 0}`
+        : `${T.failuresBeforeClear} ${failures}`
+      const rightMaxW = this.isChallengeLeaderboard() ? 128 : 92
+      this.drawFittedText(ctx, rightText, x + w - 18, rowY + 1, rightMaxW, 13, 9, '', 'right')
+
+      ctx.fillStyle = TEXT_COLOR
+      const nameMaxW = Math.max(70, w - 86 - rightMaxW)
+      this.drawFittedText(ctx, record.nickname || T.player, x + 50, rowY + 1, nameMaxW, 14, 9, 'bold', 'left')
     })
   }
 
@@ -582,22 +789,247 @@ export default class MenuScene extends BaseScene {
     const w = this.width - 40
     const h = Math.min(378, this.bottomY(118) - y)
 
-    this.roundRect(ctx, x, y, w, h, 6)
-    ctx.fillStyle = '#FFFFFF'
+    this.roundRect(ctx, x, y, w, h, UITheme.radius.md)
+    ctx.fillStyle = UITheme.colors.surface
     ctx.fill()
-    this.roundRectLeft(ctx, x, y, 6, h, 12)
-    ctx.fillStyle = BRAND_COLOR
-    ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
 
     ctx.fillStyle = TEXT_COLOR
     ctx.font = 'bold 18px Arial'
     ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
-    ctx.fillText(T.challengeSelect, x + 18, y + 30)
+    this.drawFittedText(ctx, T.challengeSelect, x + 18, y + 30, w - 36, 18, 12, 'bold', 'left')
 
-    ctx.fillStyle = '#777777'
-    ctx.font = '12px Arial'
-    ctx.fillText(`已解锁 ${this.unlockedChallengeLevel}/${this.challengeLevels.length || 20}`, x + 18, y + 54)
+    ctx.fillStyle = UITheme.colors.muted
+    const cols = 6
+    const rows = 5
+    const perPage = cols * rows
+    const maxPage = Math.max(0, Math.ceil((this.challengeLevels.length || 99) / perPage) - 1)
+    const pageText = `${this.challengeSelectPage + 1}/${maxPage + 1}`
+    this.drawFittedText(ctx, `已解锁 ${this.unlockedChallengeLevel}/${this.challengeLevels.length || 99}  第 ${pageText} 页`, x + 18, y + 54, w - 36, 12, 9, '', 'left')
+  }
+
+  createSettingsControls() {
+    const panel = this.getSettingsPanelRect()
+    const controlW = panel.width - 72
+
+    return [
+      this.createToggleControl({
+        x: panel.x + panel.width - 72,
+        y: panel.y + 78,
+        width: 48,
+        height: 28,
+        getValue: () => getGameSettings().soundEnabled,
+        onChange: value => updateGameSettings({ soundEnabled: value })
+      }),
+      this.createSliderControl({
+        x: panel.x + 36,
+        y: panel.y + 136,
+        width: controlW,
+        height: 34,
+        getValue: () => getGameSettings().volume,
+        onChange: value => updateGameSettings({ volume: value })
+      }),
+      this.createToggleControl({
+        x: panel.x + panel.width - 72,
+        y: panel.y + 208,
+        width: 48,
+        height: 28,
+        getValue: () => getGameSettings().vibrationEnabled,
+        onChange: value => updateGameSettings({ vibrationEnabled: value })
+      }),
+      this.createActionControl({
+        x: panel.x + 36,
+        y: panel.y + 266,
+        width: controlW,
+        height: 38,
+        text: '\u4fee\u6539\u6635\u79f0',
+        accentColor: UITheme.colors.primary,
+        onClick: () => this.changeNickname()
+      }),
+      this.createActionControl({
+        x: panel.x + 36,
+        y: panel.y + 314,
+        width: controlW,
+        height: 38,
+        text: '\u5151\u6362\u7801',
+        accentColor: UITheme.colors.secondary,
+        onClick: () => this.redeemCode()
+      }),
+      this.createActionControl({
+        x: panel.x + 36,
+        y: panel.y + 362,
+        width: controlW,
+        height: 38,
+        text: '\u6d4b\u8bd5\u97f3\u6548\u548c\u632f\u52a8',
+        accentColor: UITheme.colors.warning,
+        onClick: () => {
+          this.previewVibration()
+        }
+      })
+    ]
+  }
+
+  handleSettingsTouch(x, y) {
+    for (const control of this.settingsControls) {
+      if (control.hitTest(x, y)) {
+        control.click(x, y)
+        return true
+      }
+    }
+
+    return false
+  }
+
+  drawSettingsPanel() {
+    const ctx = this.ctx
+    const panel = this.getSettingsPanelRect()
+    const settings = getGameSettings()
+
+    ctx.save()
+    this.roundRect(ctx, panel.x, panel.y, panel.width, panel.height, UITheme.radius.lg)
+    ctx.fillStyle = UITheme.colors.surface
+    ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    ctx.fillStyle = UITheme.colors.text
+    ctx.textBaseline = 'middle'
+    this.drawFittedText(ctx, '\u8bbe\u7f6e', panel.x + 24, panel.y + 34, panel.width - 48, 20, 14, 'bold', 'left')
+    this.drawSettingsLabel('\u97f3\u6548', '', panel.y + 92)
+    this.drawSettingsLabel('\u97f3\u91cf', `${Math.round(settings.volume * 100)}%`, panel.y + 128)
+    this.drawSettingsLabel('\u632f\u52a8', '', panel.y + 222)
+
+    for (const control of this.settingsControls) {
+      control.draw(ctx)
+    }
+
+    ctx.restore()
+  }
+
+  drawSettingsLabel(label, value, y) {
+    const ctx = this.ctx
+    const panel = this.getSettingsPanelRect()
+
+    ctx.fillStyle = UITheme.colors.text
+    this.drawFittedText(ctx, label, panel.x + 36, y, panel.width - 150, 15, 10, 'bold', 'left')
+    if (!value) return
+
+    ctx.fillStyle = UITheme.colors.muted
+    this.drawFittedText(ctx, value, panel.x + panel.width - 36, y, 108, 13, 9, '', 'right')
+  }
+
+  getSettingsPanelRect() {
+    const width = Math.min(this.width - 40, 320)
+
+    return {
+      x: (this.width - width) / 2,
+      y: Math.max(this.safeLayout.top + 58, this.y(86)),
+      width,
+      height: 418
+    }
+  }
+
+  createToggleControl({ x, y, width, height, getValue, onChange }) {
+    return {
+      hitTest(px, py) {
+        return px >= x && px <= x + width && py >= y && py <= y + height
+      },
+      click() {
+        onChange(!getValue())
+        SoundEffects.play('button')
+      },
+      draw: ctx => {
+        const enabled = getValue()
+        ctx.save()
+        this.roundRect(ctx, x, y, width, height, height / 2)
+        ctx.fillStyle = enabled ? UITheme.colors.primary : UITheme.colors.disabled
+        ctx.fill()
+        ctx.fillStyle = UITheme.colors.surface
+        ctx.beginPath()
+        ctx.arc(enabled ? x + width - height / 2 : x + height / 2, y + height / 2, height / 2 - 3, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      }
+    }
+  }
+
+  createSliderControl({ x, y, width, height, getValue, onChange }) {
+    return {
+      hitTest(px, py) {
+        return px >= x && px <= x + width && py >= y && py <= y + height
+      },
+      click(px) {
+        onChange(Math.max(0, Math.min(1, (px - x) / width)))
+        SoundEffects.play('button')
+      },
+      draw: ctx => {
+        const value = getValue()
+        const barY = y + height / 2
+        ctx.save()
+        this.roundRect(ctx, x, barY - 4, width, 8, 4)
+        ctx.fillStyle = UITheme.colors.line
+        ctx.fill()
+        this.roundRect(ctx, x, barY - 4, width * value, 8, 4)
+        ctx.fillStyle = UITheme.colors.primary
+        ctx.fill()
+        ctx.fillStyle = UITheme.colors.surface
+        ctx.strokeStyle = UITheme.colors.primary
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(x + width * value, barY, 12, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.restore()
+      }
+    }
+  }
+
+  createActionControl({ x, y, width, height, text, accentColor, onClick }) {
+    return {
+      hitTest(px, py) {
+        return px >= x && px <= x + width && py >= y && py <= y + height
+      },
+      click() {
+        SoundEffects.play('button')
+        onClick()
+      },
+      draw: ctx => {
+        ctx.save()
+        this.roundRect(ctx, x, y, width, height, UITheme.radius.md)
+        ctx.fillStyle = accentColor === UITheme.colors.warning
+          ? UITheme.colors.warningLight
+          : this.getCardFill(accentColor)
+        ctx.fill()
+        ctx.strokeStyle = accentColor
+        ctx.stroke()
+        ctx.fillStyle = accentColor === UITheme.colors.warning ? UITheme.colors.text : accentColor
+        ctx.font = 'bold 14px Arial'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(text, x + width / 2, y + height / 2)
+        ctx.restore()
+      }
+    }
+  }
+
+  previewVibration() {
+    const settings = getGameSettings()
+    if (!settings.vibrationEnabled) return
+    if (typeof wx === 'undefined' || !wx || typeof wx.vibrateShort !== 'function') return
+
+    try {
+      wx.vibrateShort({ type: 'medium' })
+    } catch (err) {
+      try {
+        wx.vibrateShort()
+      } catch (fallbackErr) {
+        console.warn('preview vibration failed:', fallbackErr)
+      }
+    }
   }
 
   getLeaderboardTitle() {
@@ -616,8 +1048,8 @@ export default class MenuScene extends BaseScene {
     const th = 46
     const tx = (this.width - tw) / 2
     const ty = this.bottomY(106)
-    this.roundRect(ctx, tx, ty, tw, th, 10)
-    ctx.fillStyle = 'rgba(34,34,34,0.88)'
+    this.roundRect(ctx, tx, ty, tw, th, UITheme.radius.lg)
+    ctx.fillStyle = 'rgba(24, 50, 74, 0.9)'
     ctx.fill()
     ctx.fillStyle = '#FFFFFF'
     ctx.font = '15px Arial'
@@ -626,34 +1058,89 @@ export default class MenuScene extends BaseScene {
     ctx.fillText(this.toastText, this.width / 2, ty + th / 2)
   }
 
-  createCard({ x, y, width, height, text, accentColor, onClick }) {
+  getVerticalListStartY(count, itemH, minGap, preferredStartY) {
+    const bottomLimit = this.bottomY(78)
+    const needed = count * itemH + (count - 1) * minGap
+    const maxStartY = bottomLimit - needed
+    return Math.max(this.y(76), Math.min(preferredStartY, maxStartY))
+  }
+
+  getMenuCardWidth() {
+    return this.width - UITheme.menu.pageX * 2
+  }
+
+  getVerticalListGap(startY, count, itemH, preferredGap, minGap) {
+    if (count <= 1) return 0
+    const bottomLimit = this.bottomY(78)
+    const available = bottomLimit - startY - count * itemH
+    return Math.max(minGap, Math.min(preferredGap, available / (count - 1)))
+  }
+
+  drawFittedText(ctx, text, x, y, maxWidth, fontSize, minFontSize = 10, weight = 'bold', align = 'center') {
+    const safeText = `${text}`
+    let size = fontSize
+    const fontWeight = weight ? `${weight} ` : ''
+
+    while (size > minFontSize) {
+      ctx.font = `${fontWeight}${size}px Arial`
+      if (ctx.measureText(safeText).width <= maxWidth) break
+      size -= 1
+    }
+
+    ctx.textAlign = align
+    ctx.fillText(safeText, x, y)
+  }
+
+  createCard({ x, y, width, height, text, subText = '', accentColor, onClick, icon = '', variant = 'card', compact = false }) {
     return {
       hitTest(px, py) {
         return px >= x && px <= x + width && py >= y && py <= y + height
       },
       click() {
+        SoundEffects.play('button')
         onClick()
       },
       draw: ctx => {
         ctx.save()
-        this.roundRect(ctx, x, y, width, height, 5)
-        ctx.fillStyle = '#FFFFFF'
-        ctx.fill()
-        this.roundRectLeft(ctx, x, y, 6, height, 14)
-        ctx.fillStyle = accentColor
-        ctx.fill()
-        ctx.fillStyle = TEXT_COLOR
-        ctx.font = 'bold 17px Arial'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(text, x + width / 2 + 3, y + height / 2)
+        this.roundRect(ctx, x, y, width, height, UITheme.radius.md)
+        if (variant === 'solid') {
+          const gradient = ctx.createLinearGradient(x, y, x, y + height)
+          gradient.addColorStop(0, accentColor)
+          gradient.addColorStop(1, this.darken(accentColor, 0.16))
+          ctx.fillStyle = gradient
+          ctx.fill()
+          this.drawCardIcon(ctx, icon, x + 30, y + height / 2, 16, '#FFFFFF')
+          ctx.fillStyle = '#FFFFFF'
+          ctx.textBaseline = 'middle'
+          this.drawFittedText(ctx, text, x + width / 2 + (icon ? 8 : 0), y + height / 2, width - (icon ? 84 : 24), compact ? UITheme.menu.compactFont : UITheme.menu.itemFont, compact ? 9 : 12, 'bold', 'center')
+        } else {
+          ctx.fillStyle = this.getCardFill(accentColor)
+          ctx.fill()
+          ctx.strokeStyle = accentColor
+          ctx.lineWidth = 1.4
+          ctx.stroke()
+          const hasSideIcon = !compact && icon
+          if (hasSideIcon) {
+            this.drawCardIcon(ctx, icon, x + 38, y + height / 2, Math.min(24, height * 0.32), accentColor)
+          }
+          ctx.fillStyle = this.getReadableCardTextColor(accentColor, compact)
+          ctx.textBaseline = 'middle'
+          const textX = hasSideIcon ? x + 74 : x + width / 2
+          const textMaxW = hasSideIcon ? width - 92 : width - 18
+          const textAlign = hasSideIcon ? 'left' : 'center'
+          this.drawFittedText(ctx, text, textX, y + height / 2 - (subText ? 8 : 0), textMaxW, compact ? UITheme.menu.compactFont : UITheme.menu.itemFont, compact ? 9 : 12, 'bold', textAlign)
+          if (subText) {
+            ctx.fillStyle = UITheme.colors.muted
+            this.drawFittedText(ctx, subText, x + 74, y + height / 2 + 15, width - 92, UITheme.menu.subFont, 9, '', 'left')
+          }
+        }
         ctx.restore()
       }
     }
   }
 
   createBackCard(onClick) {
-    return this.createCard({ x: 20, y: this.bottomY(66), width: 110, height: 40, text: T.back, accentColor: DANGER_COLOR, onClick })
+    return this.createCard({ x: UITheme.menu.pageX, y: this.safeLayout.top, width: UITheme.menu.backW, height: UITheme.menu.backH, text: '\u2039', accentColor: UITheme.colors.text, compact: true, onClick })
   }
 
   createChallengeLevelCard({ x, y, width, height, level, unlocked, onClick }) {
@@ -662,24 +1149,37 @@ export default class MenuScene extends BaseScene {
         return px >= x && px <= x + width && py >= y && py <= y + height
       },
       click() {
+        SoundEffects.play('button')
         onClick()
       },
       draw: ctx => {
         ctx.save()
-        this.roundRect(ctx, x, y, width, height, 6)
-        ctx.fillStyle = unlocked ? '#F7FAFF' : '#E6E6E6'
+        this.roundRect(ctx, x, y, width, height, UITheme.radius.md)
+        ctx.fillStyle = unlocked ? UITheme.colors.primaryLight : 'rgba(242, 244, 247, 0.92)'
         ctx.fill()
-        this.roundRectLeft(ctx, x, y, 5, height, 12)
+        ctx.strokeStyle = unlocked ? BRAND_COLOR : UITheme.colors.disabled
+        ctx.lineWidth = 1
+        ctx.stroke()
+        this.roundRectLeft(ctx, x, y, 4, height, UITheme.radius.md)
         ctx.fillStyle = unlocked ? BRAND_COLOR : '#B8B8B8'
         ctx.fill()
         ctx.fillStyle = unlocked ? TEXT_COLOR : '#888888'
-        ctx.font = 'bold 18px Arial'
+        ctx.font = 'bold 16px Arial'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        ctx.fillText(unlocked ? `${level.index}` : `\uD83D\uDD12 ${level.index}`, x + width / 2, y + height / 2 - 7)
-        ctx.fillStyle = unlocked ? '#666666' : '#999999'
-        ctx.font = '11px Arial'
-        ctx.fillText(this.getAiDifficultyShortLabel(level.aiDifficulty), x + width / 2, y + height / 2 + 15)
+        ctx.fillText(`${level.index}`, x + width / 2, y + height / 2 - 8)
+
+        if (!unlocked) {
+          ctx.fillStyle = '#C58A00'
+          ctx.font = '10px Arial'
+          ctx.textAlign = 'left'
+          ctx.fillText('\uD83D\uDD12', x + 10, y + 13)
+        }
+
+        ctx.fillStyle = unlocked ? UITheme.colors.muted : '#999999'
+        ctx.font = '10px Arial'
+        ctx.textAlign = 'center'
+        ctx.fillText(this.getAiDifficultyShortLabel(level.aiDifficulty), x + width / 2, y + height / 2 + 11)
         ctx.restore()
       }
     }
@@ -689,6 +1189,185 @@ export default class MenuScene extends BaseScene {
     if (difficulty === 'inferno') return '\u70bc\u72f1'
     if (difficulty === 'hard') return '\u56f0\u96be'
     return '\u666e\u901a'
+  }
+
+  getCardFill(accentColor) {
+    if (accentColor === DANGER_COLOR) return UITheme.colors.dangerLight
+    if (accentColor === UITheme.colors.secondary) return UITheme.colors.secondaryLight
+    if (accentColor === UITheme.colors.purple) return UITheme.colors.purpleLight
+    if (accentColor === UITheme.colors.warning) return UITheme.colors.warningLight
+    return UITheme.colors.surface
+  }
+
+  getReadableCardTextColor(accentColor, compact = false) {
+    if (compact || accentColor === UITheme.colors.warning) return UITheme.colors.text
+    return accentColor
+  }
+
+  drawAvatar(ctx, x, y, color) {
+    ctx.save()
+    if (!drawImageAsset(ctx, 'avatarBlue', x - 18, y - 18, 36, 36)) {
+      ctx.fillStyle = UITheme.colors.primaryLight
+      ctx.beginPath()
+      ctx.arc(x, y, 18, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = color
+      ctx.beginPath()
+      ctx.arc(x, y - 5, 6, 0, Math.PI * 2)
+      ctx.fill()
+      this.roundRect(ctx, x - 10, y + 4, 20, 8, 4)
+      ctx.fill()
+    }
+    ctx.restore()
+  }
+
+  drawTopBar() {
+    const ctx = this.ctx
+    if (this.page === 'home') return
+    const y = this.safeLayout.top + 17
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = 'bold 24px Arial'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('\u2039', 32, y)
+  }
+
+  getPageTitle() {
+    const map = {
+      mode: T.playStyle,
+      difficulty: T.difficulty,
+      board: T.board,
+      leaderboard: this.getLeaderboardTitle(),
+      'challenge-select': T.challengeSelect,
+      settings: '\u8bbe\u7f6e'
+    }
+    return map[this.page] || T.title
+  }
+
+  drawCardIcon(ctx, icon, x, y, size, color) {
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = Math.max(2, size / 8)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+
+    if (icon === 'robot' && drawImageAsset(ctx, 'robot', x - size * 1.25, y - size * 1.25, size * 2.5, size * 2.5)) {
+      ctx.restore()
+      return
+    }
+
+    if (icon === 'grid') {
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath()
+        ctx.moveTo(x - size, y + i * size)
+        ctx.lineTo(x + size, y + i * size)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(x + i * size, y - size)
+        ctx.lineTo(x + i * size, y + size)
+        ctx.stroke()
+      }
+    } else if (icon === 'players') {
+      ctx.beginPath()
+      ctx.arc(x - size * 0.45, y - size * 0.35, size * 0.35, 0, Math.PI * 2)
+      ctx.arc(x + size * 0.45, y - size * 0.35, size * 0.35, 0, Math.PI * 2)
+      ctx.fill()
+      this.roundRect(ctx, x - size * 1.1, y + size * 0.15, size * 2.2, size * 0.75, size * 0.2)
+      ctx.fill()
+    } else if (icon === 'globe') {
+      ctx.beginPath()
+      ctx.arc(x, y, size, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(x - size, y)
+      ctx.lineTo(x + size, y)
+      ctx.moveTo(x, y - size)
+      ctx.quadraticCurveTo(x - size * 0.6, y, x, y + size)
+      ctx.moveTo(x, y - size)
+      ctx.quadraticCurveTo(x + size * 0.6, y, x, y + size)
+      ctx.stroke()
+    } else if (icon === 'star' || icon === 'trophy') {
+      this.drawStar(ctx, x, y, size, color)
+    } else if (icon === 'flag') {
+      ctx.beginPath()
+      ctx.moveTo(x - size * 0.7, y + size)
+      ctx.lineTo(x - size * 0.7, y - size)
+      ctx.lineTo(x + size * 0.8, y - size * 0.55)
+      ctx.lineTo(x - size * 0.7, y - size * 0.1)
+      ctx.stroke()
+    } else if (icon === 'hex') {
+      ctx.beginPath()
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 3 * i - Math.PI / 6
+        const px = x + Math.cos(a) * size
+        const py = y + Math.sin(a) * size
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      }
+      ctx.closePath()
+      ctx.stroke()
+    } else if (icon === 'book' || icon === 'edit' || icon === 'gear') {
+      ctx.font = `bold ${size * 1.4}px Arial`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      const text = icon === 'book' ? '?' : icon === 'edit' ? '\u270e' : '\u2699'
+      ctx.fillText(text, x, y)
+    } else if (icon === 'devil') {
+      ctx.font = `bold ${size * 1.2}px Arial`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('AI', x, y)
+    }
+    ctx.restore()
+  }
+
+  drawStar(ctx, x, y, r, color) {
+    ctx.save()
+    ctx.fillStyle = color
+    ctx.beginPath()
+    for (let i = 0; i < 10; i++) {
+      const radius = i % 2 === 0 ? r : r * 0.45
+      const angle = -Math.PI / 2 + i * Math.PI / 5
+      const px = x + Math.cos(angle) * radius
+      const py = y + Math.sin(angle) * radius
+      if (i === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+    }
+    ctx.closePath()
+    ctx.fill()
+    ctx.restore()
+  }
+
+  darken(hex, amount) {
+    const raw = hex.replace('#', '')
+    const num = parseInt(raw, 16)
+    const r = Math.max(0, Math.floor(((num >> 16) & 255) * (1 - amount)))
+    const g = Math.max(0, Math.floor(((num >> 8) & 255) * (1 - amount)))
+    const b = Math.max(0, Math.floor((num & 255) * (1 - amount)))
+    return `rgb(${r}, ${g}, ${b})`
+  }
+
+  drawMiniBoardMark(x, y, size, color) {
+    const ctx = this.ctx
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 3
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(x - size, y - size)
+    ctx.lineTo(x + size, y - size)
+    ctx.lineTo(x + size, y + size)
+    ctx.stroke()
+    ctx.fillStyle = UITheme.colors.dot
+    for (let dx = -1; dx <= 1; dx += 2) {
+      for (let dy = -1; dy <= 1; dy += 2) {
+        ctx.beginPath()
+        ctx.arc(x + dx * size, y + dy * size, 3, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+    ctx.restore()
   }
 
   roundRect(ctx, x, y, w, h, r) {

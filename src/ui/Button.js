@@ -1,3 +1,5 @@
+import SoundEffects from '../assets/SoundEffects'
+
 export default class Button {
   constructor({ x, y, width, height, text, onClick, disabled = false }) {
     this.x = x
@@ -39,6 +41,7 @@ export default class Button {
 
   click() {
     if (this.disabled) return
+    SoundEffects.play('button')
     if (this.onClick) this.onClick()
   }
 }

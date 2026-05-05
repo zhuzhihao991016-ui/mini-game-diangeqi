@@ -146,6 +146,8 @@ function normalizeLayout(layout, cellSize, padding) {
         unitX: centroid.x,
         unitY: centroid.y
       },
+      gridX: Number.isFinite(shape.gridX) ? shape.gridX : centroid.x,
+      gridY: Number.isFinite(shape.gridY) ? shape.gridY : centroid.y,
       points: shape.points.map(point => ({
         x: padding + point[0] * cellSize,
         y: padding + point[1] * cellSize,
@@ -197,6 +199,8 @@ function attachGeometry(board, { vertices, edgeSegments, cells }, layoutMeta) {
     })
 
     cell.kind = cellGeometry.kind
+    cell.gridX = cellGeometry.gridX
+    cell.gridY = cellGeometry.gridY
     cell.center = cellGeometry.center
     cell.points = cellGeometry.points
     cell.polygonVertexIds = cellGeometry.polygonVertexIds

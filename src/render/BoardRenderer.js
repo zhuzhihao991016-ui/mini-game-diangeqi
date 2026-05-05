@@ -1,7 +1,9 @@
+import UITheme from '../ui/theme'
+
 export default class BoardRenderer {
   constructor(ctx) {
     this.ctx = ctx
-    this.obstacleColor = '#4A4A4A'
+    this.obstacleColor = UITheme.colors.obstacle
   }
 
   draw({ board, originX, originY, cellSize, animationManager, highlightedEdgeId = null }) {
@@ -42,10 +44,54 @@ export default class BoardRenderer {
 
   drawMixedShapeSpecialCells(board, originX, originY, cellSize) {
     for (const cell of board.cells.values()) {
-      if (!cell.isDoubleScore) continue
       const center = this.getMixedShapePoint(cell.center, originX, originY, cellSize)
-      this.drawDoubleScoreLabel(center.x, center.y, cellSize)
+      const points = Array.isArray(cell.points)
+        ? cell.points.map(point => this.getMixedShapePoint(point, originX, originY, cellSize))
+        : []
+
+      if (cell.isFrozen) {
+        this.drawMixedShapeTint(points, UITheme.colors.primaryLight, UITheme.colors.primary)
+        this.drawCellMarker(center.x, center.y, cellSize, 'ICE', UITheme.colors.primary)
+        continue
+      }
+
+      if (cell.isObstacle) {
+        this.drawMixedShapeTint(points, 'rgba(170, 179, 189, 0.18)', this.obstacleColor)
+        this.drawObstacleCellRect(center.x - cellSize * 0.28, center.y - cellSize * 0.28, cellSize * 0.56, cellSize * 0.56)
+        continue
+      }
+
+      if (cell.isBomb) {
+        this.drawCellMarker(center.x, center.y, cellSize, 'B', UITheme.colors.danger)
+      }
+
+      if (cell.isQuantum) {
+        this.drawCellMarker(center.x, center.y + cellSize * 0.18, cellSize * 0.76, 'Q', UITheme.colors.purple)
+      }
+
+      if (cell.isDoubleScore) {
+        this.drawDoubleScoreLabel(center.x, center.y, cellSize)
+      }
     }
+  }
+
+  drawMixedShapeTint(points, fillStyle, strokeStyle) {
+    if (!Array.isArray(points) || points.length === 0) return
+
+    const ctx = this.ctx
+    ctx.save()
+    ctx.fillStyle = fillStyle
+    ctx.strokeStyle = strokeStyle
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(points[0].x, points[0].y)
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y)
+    }
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
   }
 
   drawMixedShapeCells(board, originX, originY, cellSize, animationManager) {
@@ -84,6 +130,16 @@ export default class BoardRenderer {
     for (const edge of board.edges.values()) {
       const line = this.getMixedShapeEdgeLine(edge, originX, originY, cellSize)
 
+      if (edge.isObstacleEdge) {
+        this.drawObstacleEdge(line)
+        continue
+      }
+
+      if (edge.isBlocked) {
+        this.drawBlockedCellEdge(line)
+        continue
+      }
+
       if (!edge.ownerId) {
         if (edge.id === highlightedEdgeId) {
           this.drawHighlightedEdge(line)
@@ -111,7 +167,7 @@ export default class BoardRenderer {
       pointSet.add(`${line.x2.toFixed(1)}_${line.y2.toFixed(1)}`)
     }
 
-    ctx.fillStyle = '#333'
+    ctx.fillStyle = UITheme.colors.dot
 
     pointSet.forEach(value => {
       const [x, y] = value.split('_').map(Number)
@@ -134,8 +190,21 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       const y = originY + cell.y * cellSize
 
       if (cell.isObstacle) {
+        if (cell.isFrozen) {
+          this.drawFrozenCellRect(x, y, cellSize, cellSize)
+          continue
+        }
+
         this.drawObstacleCellRect(x, y, cellSize, cellSize)
         continue
+      }
+
+      if (cell.isBomb) {
+        this.drawCellMarker(x + cellSize / 2, y + cellSize / 2, cellSize, 'B', UITheme.colors.danger)
+      }
+
+      if (cell.isQuantum) {
+        this.drawCellMarker(x + cellSize / 2, y + cellSize * 0.72, cellSize * 0.72, 'Q', UITheme.colors.purple)
       }
 
       if (cell.isDoubleScore) {
@@ -221,8 +290,8 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
   drawEmptyEdge(line) {
     const ctx = this.ctx
 
-    ctx.strokeStyle = '#aaa'
-    ctx.lineWidth = 2
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 3
     ctx.lineCap = 'round'
 
     ctx.beginPath()
@@ -235,11 +304,11 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     const ctx = this.ctx
 
     ctx.save()
-    ctx.strokeStyle = '#F5A623'
+    ctx.strokeStyle = UITheme.colors.warning
     ctx.lineWidth = 8
     ctx.lineCap = 'round'
-    ctx.shadowColor = 'rgba(245, 166, 35, 0.55)'
-    ctx.shadowBlur = 10
+    ctx.shadowColor = 'rgba(255, 196, 61, 0.45)'
+    ctx.shadowBlur = 8
 
     ctx.beginPath()
     ctx.moveTo(line.x1, line.y1)
@@ -273,7 +342,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
     for (let y = 0; y <= board.rows; y++) {
       for (let x = 0; x <= board.cols; x++) {
-        ctx.fillStyle = '#333'
+        ctx.fillStyle = UITheme.colors.dot
         ctx.beginPath()
         ctx.arc(
           originX + x * cellSize,
@@ -324,18 +393,18 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
   }
 
   getPlayerColor(playerId) {
-    if (playerId === 'p1') return '#4A90E2'
-    if (playerId === 'p2') return '#E24A4A'
-    if (playerId === 'p3') return '#2ecc71'
-    if (playerId === 'p4') return '#f1c40f'
-    return '#333'
+    if (playerId === 'p1') return UITheme.colors.p1
+    if (playerId === 'p2') return UITheme.colors.p2
+    if (playerId === 'p3') return UITheme.colors.secondary
+    if (playerId === 'p4') return UITheme.colors.warning
+    return UITheme.colors.text
   }
 
   drawDoubleScoreLabel(cx, cy, size) {
     const ctx = this.ctx
 
     ctx.save()
-    ctx.fillStyle = '#1F7AE0'
+    ctx.fillStyle = UITheme.colors.warning
     ctx.font = `bold ${Math.max(22, Math.floor(size * 0.46))}px Arial`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -357,6 +426,33 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     ctx.moveTo(x + width - pad, y + pad)
     ctx.lineTo(x + pad, y + height - pad)
     ctx.stroke()
+    ctx.restore()
+  }
+
+  drawFrozenCellRect(x, y, width, height) {
+    const ctx = this.ctx
+
+    ctx.save()
+    ctx.fillStyle = 'rgba(223, 240, 255, 0.72)'
+    ctx.strokeStyle = UITheme.colors.primary
+    ctx.lineWidth = Math.max(2, Math.min(width, height) * 0.06)
+    this.roundRect(ctx, x + 4, y + 4, width - 8, height - 8, Math.min(8, width / 5))
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+
+    this.drawCellMarker(x + width / 2, y + height / 2, Math.min(width, height), 'ICE', UITheme.colors.primary)
+  }
+
+  drawCellMarker(cx, cy, size, text, color) {
+    const ctx = this.ctx
+
+    ctx.save()
+    ctx.fillStyle = color
+    ctx.font = `bold ${Math.max(12, Math.floor(size * 0.28))}px Arial`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, cx, cy)
     ctx.restore()
   }
 
@@ -444,6 +540,11 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       const cy = center.y + originY
 
       if (cell.isObstacle) {
+        if (cell.isFrozen) {
+          this.drawCellMarker(cx, cy, size, 'ICE', UITheme.colors.primary)
+          continue
+        }
+
         const corners = this.getHexCorners(cx, cy, size * 0.82)
 
         ctx.save()
@@ -461,6 +562,14 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
       if (cell.isDoubleScore) {
         this.drawDoubleScoreLabel(cx, cy, size)
+      }
+
+      if (cell.isBomb) {
+        this.drawCellMarker(cx, cy, size, 'B', UITheme.colors.danger)
+      }
+
+      if (cell.isQuantum) {
+        this.drawCellMarker(cx, cy + size * 0.24, size * 0.72, 'Q', UITheme.colors.purple)
       }
     }
   }
@@ -516,7 +625,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       pointSet.add(key2)
     }
   
-    ctx.fillStyle = '#333'
+    ctx.fillStyle = UITheme.colors.dot
   
     pointSet.forEach(key => {
       const [x, y] = key.split('_').map(Number)

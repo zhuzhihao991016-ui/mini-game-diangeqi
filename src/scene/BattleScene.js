@@ -11,12 +11,16 @@ import ClaimEdgeAction from '../core/action/ClaimEdgeAction'
 import AnimationManager from '../animation/AnimationManager'
 import SimpleAI from '../ai/SimpleAI'
 import { getSceneSafeLayout } from '../utils/SafeArea'
-import { createChallengeLevels } from '../core/level/ChallengeLevels'
+import { applyChallengeLevelToBoard, createChallengeLevels } from '../core/level/ChallengeLevels'
 import { unlockChallengeLevel } from '../state/ChallengeProgress'
+import UITheme from '../ui/theme'
+import { drawImageAsset, getImageAsset, preloadImageAssets } from '../assets/ImageAssets'
+import SoundEffects from '../assets/SoundEffects'
+import { getGameSettings } from '../state/SettingsState'
 
 const PLAYER_COLORS = {
-  p1: '#4A90E2',
-  p2: '#E24A4A'
+  p1: UITheme.colors.p1,
+  p2: UITheme.colors.p2
 }
 
 const DEFAULT_PLAYER_NAMES = {
@@ -55,6 +59,7 @@ export default class BattleScene extends BaseScene {
     this.gameOverPanel = new GameOverPanel(ctx, canvas, this.width, this.height)
     this.animationManager = new AnimationManager()
     this.safeLayout = getSceneSafeLayout(this.width, this.height)
+    preloadImageAssets()
 
     this.clientId = Math.random().toString(36).slice(2)
 
@@ -73,10 +78,10 @@ export default class BattleScene extends BaseScene {
     this.playerNames = { ...DEFAULT_PLAYER_NAMES }
   
     this.backButton = {
-      x: 20,
-      y: this.safeLayout.top,
-      width: 120,
-      height: 44
+      x: this.challengeMode ? 14 : this.width / 2 - 21,
+      y: this.safeLayout.top + 64,
+      width: 42,
+      height: 34
     }
 
     this.undoButton = {
@@ -102,11 +107,19 @@ export default class BattleScene extends BaseScene {
     this.turnCoverPlayerId = null
     this.resultRecorded = false
     this.lastAppliedRoomStateKey = ''
+    this.comboAnimations = []
+    this.comboChain = {
+      playerId: null,
+      count: 0
+    }
+    this.soundTimers = []
+    this.lastGameEndSoundKey = ''
 
     this.resetGame()
   }
 
   resetGame() {
+    this.clearSoundTimers()
     let board
 
     if (this.challengeMode) {
@@ -120,10 +133,14 @@ export default class BattleScene extends BaseScene {
         cellSize: 1,
         padding: 0
       })
+      applyChallengeLevelToBoard(board, this.currentChallengeLevel)
       board.challengeMeta = {
+        ...(board.challengeMeta || {}),
         level: this.currentChallengeLevel.index,
         score: this.currentChallengeLevel.score,
-        aiDifficulty: this.currentChallengeLevel.aiDifficulty
+        aiDifficulty: this.currentChallengeLevel.aiDifficulty,
+        boardType: this.currentChallengeLevel.boardType,
+        boardSize: this.currentChallengeLevel.boardSize
       }
     } else if (this.boardType === 'hex') {
       board = BoardFactory.createHexBoard(3) // 半径3
@@ -146,6 +163,11 @@ export default class BattleScene extends BaseScene {
     this.layout = this.createBoardLayout()
   
     this.animationManager = new AnimationManager()
+    this.comboAnimations = []
+    this.comboChain = {
+      playerId: null,
+      count: 0
+    }
     this.undoStack = []
     this.hintEdgeId = null
     this.turnCoverVisible = false
@@ -156,6 +178,7 @@ export default class BattleScene extends BaseScene {
       this.aiThinkTimer = null
     }
     this.resultRecorded = false
+    this.lastGameEndSoundKey = ''
 
     this.hitTest = new HitTest({
       board,
@@ -306,11 +329,14 @@ export default class BattleScene extends BaseScene {
     const x = 30
     const y = this.height / 2 - 26
   
-    this._roundRect(ctx, x, y, w, h, 10)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+    this._roundRect(ctx, x, y, w, h, UITheme.radius.lg)
+    ctx.fillStyle = UITheme.colors.surface
     ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
   
-    ctx.fillStyle = '#333'
+    ctx.fillStyle = UITheme.colors.text
     ctx.font = 'bold 16px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -319,6 +345,7 @@ export default class BattleScene extends BaseScene {
   }
 
   applyActionWithAnimation(action) {
+    const previousStatus = this.engine.status
     const result = this.engine.handleAction(action)
   
     if (result && result.success) {
@@ -332,7 +359,11 @@ export default class BattleScene extends BaseScene {
         this.animationManager.playCell(cell.id, action.playerId)
       }
 
+      this.playActionSounds(result)
+      this.updateComboChain(result, action.playerId)
+
       this.recordLeaderboardResult()
+      this.playGameEndSound(previousStatus)
     }
   
     return result
@@ -371,7 +402,7 @@ export default class BattleScene extends BaseScene {
     if (state.winnerId !== 'p1') return
 
     this.resultRecorded = true
-    unlockChallengeLevel(this.challengeLevelIndex + 1, this.challengeLevels ? this.challengeLevels.length : 20)
+    unlockChallengeLevel(this.challengeLevelIndex + 1, this.challengeLevels ? this.challengeLevels.length : 99)
     if (!this.leaderboardManager || typeof this.leaderboardManager.recordGameResult !== 'function') return
 
     this.leaderboardManager.recordGameResult({
@@ -470,6 +501,9 @@ export default class BattleScene extends BaseScene {
   applyRoomStateToLocalGame(roomState) {
     if (!roomState) return
     this.updateFunModeSeedFromRoom(roomState)
+    const previousStatus = this.engine.status
+    const previousEdgeCount = this.getClaimedEdgeCount()
+    const previousCellCount = this.getOwnedCellCount()
 
     const edgeOwners = {}
     const cellOwners = {}
@@ -517,6 +551,13 @@ export default class BattleScene extends BaseScene {
     })
 
     this.lastAppliedRoomStateKey = this.getRoomStateKey(roomState)
+    this.playRoomStateDiffSounds({
+      previousEdgeCount,
+      nextEdgeCount: Object.keys(edgeOwners).length,
+      previousCellCount,
+      nextCellCount: Object.keys(cellOwners).length
+    })
+    this.playGameEndSound(previousStatus)
   }
 
   getLocalWinnerIdFromRoomState(roomState) {
@@ -598,7 +639,7 @@ export default class BattleScene extends BaseScene {
   ensureChallengeLevels() {
     if (this.challengeLevels && this.challengeLevels.length > 0) return
 
-    const topY = this.safeLayout.insets.top + 210
+    const topY = Math.max(this.safeLayout.insets.top + 210, this.safeLayout.top + 140)
     const bottomPad = this.safeLayout.insets.bottom + 190
     this.challengeLevels = createChallengeLevels({
       maxWidth: this.width - 80,
@@ -608,12 +649,12 @@ export default class BattleScene extends BaseScene {
   }
 
   createBoardLayout() {
-    const paddingX = 40
-    const topY = this.safeLayout.insets.top + 210
-    const bottomPad = this.safeLayout.insets.bottom + 190
+    const paddingX = 34
+    const topY = Math.max(this.safeLayout.insets.top + 132, this.safeLayout.top + 82)
+    const bottomPad = this.safeLayout.insets.bottom + 118
   
     const maxWidth = this.width - paddingX * 2
-    const maxHeight = this.height - topY - bottomPad
+    const maxHeight = Math.max(120, this.height - topY - bottomPad)
   
     let cellSize
     let originX
@@ -625,12 +666,12 @@ export default class BattleScene extends BaseScene {
       const hexWidth = Math.sqrt(3) * (2 * radius - 1)
       const hexHeight = 1.5 * (2 * radius - 2) + 2
   
-      cellSize = Math.floor(
+      cellSize = Math.max(12, Math.floor(
         Math.min(
           maxWidth / hexWidth,
           maxHeight / hexHeight
         )
-      )
+      ))
   
       // 六边形棋盘：origin 是中心点
       originX = this.width / 2
@@ -640,12 +681,12 @@ export default class BattleScene extends BaseScene {
         ? this.engine.board.layoutMeta
         : { widthUnits: this.cols, heightUnits: this.rows }
 
-      cellSize = Math.floor(
+      cellSize = Math.max(10, Math.floor(
         Math.min(
           maxWidth / Math.max(1, meta.widthUnits),
           maxHeight / Math.max(1, meta.heightUnits)
         )
-      )
+      ))
 
       const boardWidth = meta.widthUnits * cellSize
       const boardHeight = meta.heightUnits * cellSize
@@ -653,12 +694,12 @@ export default class BattleScene extends BaseScene {
       originX = (this.width - boardWidth) / 2
       originY = topY + (maxHeight - boardHeight) / 2
     } else {
-      cellSize = Math.floor(
+      cellSize = Math.max(12, Math.floor(
         Math.min(
           maxWidth / this.cols,
           maxHeight / this.rows
         )
-      )
+      ))
   
       const boardWidth = this.cols * cellSize
       const boardHeight = this.rows * cellSize
@@ -673,6 +714,21 @@ export default class BattleScene extends BaseScene {
       originX,
       originY
     }
+  }
+
+  _drawFittedText(text, x, y, maxWidth, fontSize, minFontSize = 10, weight = '') {
+    const ctx = this.ctx
+    const safeText = `${text}`
+    const fontWeight = weight ? `${weight} ` : ''
+    let size = fontSize
+
+    while (size > minFontSize) {
+      ctx.font = `${fontWeight}${size}px Arial`
+      if (ctx.measureText(safeText).width <= maxWidth) break
+      size -= 1
+    }
+
+    ctx.fillText(safeText, x, y)
   }
 
   updateFunModeSeedFromRoom(roomState) {
@@ -702,7 +758,7 @@ export default class BattleScene extends BaseScene {
 
   updateAssistButtonLayout() {
     const buttonGap = 12
-    const y = this.height - this.safeLayout.bottom - this.undoButton.height
+    const y = this.height - this.safeLayout.bottom - this.undoButton.height - 14
 
     if (this.isAiAssistEnabled()) {
       const totalWidth = this.undoButton.width + this.hintButton.width + buttonGap
@@ -746,12 +802,14 @@ export default class BattleScene extends BaseScene {
       }
 
       if (this.isBackButtonHit(x, y)) {
+        this.playButtonSound()
         this.returnToMenu()
         return
       }
 
       if (this.canShowUndoButton()) {
         if (this.isButtonHit(this.getUndoButton(), x, y)) {
+          this.playButtonSound()
           if (this.mode === 'online') {
             this.requestOnlineUndo()
           } else {
@@ -763,6 +821,7 @@ export default class BattleScene extends BaseScene {
 
       if (this.isAiAssistEnabled()) {
         if (this.isButtonHit(this.hintButton, x, y)) {
+          this.playButtonSound()
           this.showHint()
           return
         }
@@ -772,6 +831,7 @@ export default class BattleScene extends BaseScene {
   
       if (state.status === 'finished') {
         if (this.gameOverPanel.isRestartButtonHit(x, y)) {
+          this.playButtonSound()
           if (this.mode === 'online') {
             this.requestOnlineRematch()
           } else if (this.challengeMode) {
@@ -786,6 +846,7 @@ export default class BattleScene extends BaseScene {
           typeof this.gameOverPanel.isMenuButtonHit === 'function' &&
           this.gameOverPanel.isMenuButtonHit(x, y)
         ) {
+          this.playButtonSound()
           this.returnToMenu()
           return
         }
@@ -850,6 +911,7 @@ export default class BattleScene extends BaseScene {
       clearTimeout(this.aiThinkTimer)
       this.aiThinkTimer = null
     }
+    this.clearSoundTimers()
     this.aiThinking = false
     this.inputManager.clearTouchStartHandlers()
   }
@@ -923,6 +985,7 @@ export default class BattleScene extends BaseScene {
 
   update(deltaTime) {
     this.animationManager.update(deltaTime)
+    this.updateComboAnimations(deltaTime)
     const state = this.engine.getState()
 
     // 只在人机模式 + AI回合 执行
@@ -1063,7 +1126,9 @@ export default class BattleScene extends BaseScene {
     for (const cell of this.engine.board.cells.values()) {
       cellOwners[cell.id] = {
         ownerId: cell.ownerId,
-        doubleScoreActivated: !!cell.doubleScoreActivated
+        doubleScoreActivated: !!cell.doubleScoreActivated,
+        isObstacle: !!cell.isObstacle,
+        isFrozen: !!cell.isFrozen
       }
     }
 
@@ -1095,6 +1160,8 @@ export default class BattleScene extends BaseScene {
       if (cellSnapshot && typeof cellSnapshot === 'object') {
         cell.ownerId = cellSnapshot.ownerId || null
         cell.doubleScoreActivated = !!cellSnapshot.doubleScoreActivated
+        cell.isObstacle = !!cellSnapshot.isObstacle
+        cell.isFrozen = !!cellSnapshot.isFrozen
       } else {
         cell.ownerId = cellSnapshot || null
         cell.doubleScoreActivated = false
@@ -1110,6 +1177,11 @@ export default class BattleScene extends BaseScene {
     this.engine.winnerId = snapshot.winnerId || null
     this.resultRecorded = !!snapshot.resultRecorded
     this.animationManager = new AnimationManager()
+    this.comboAnimations = []
+    this.comboChain = {
+      playerId: null,
+      count: 0
+    }
     this.hintEdgeId = null
   }
 
@@ -1150,8 +1222,7 @@ export default class BattleScene extends BaseScene {
   }
 
   render() {
-    this.ctx.fillStyle = '#EFEFEF'
-    this.ctx.fillRect(0, 0, this.width, this.height)
+    this.drawBattleBackground()
   
     this.boardRenderer.draw({
       board: this.engine.board,
@@ -1172,6 +1243,7 @@ export default class BattleScene extends BaseScene {
   
     this.drawBackButton()
     this.drawAssistButtons()
+    this.drawComboAnimations()
   
     if (state.status === 'finished') {
       this.gameOverPanel.draw(state, {
@@ -1191,6 +1263,38 @@ export default class BattleScene extends BaseScene {
     if (this.turnCoverVisible) {
       this.drawTurnCover()
     }
+  }
+
+  drawBattleBackground() {
+    const ctx = this.ctx
+    const image = getImageAsset('menuBackground')
+
+    if (image && !image.failed && image.loaded) {
+      const imageRatio = image.width / image.height
+      const canvasRatio = this.width / this.height
+      let drawW = this.width
+      let drawH = this.height
+      let drawX = 0
+      let drawY = 0
+
+      if (imageRatio > canvasRatio) {
+        drawH = this.height
+        drawW = drawH * imageRatio
+        drawX = (this.width - drawW) / 2
+      } else {
+        drawW = this.width
+        drawH = drawW / imageRatio
+        drawY = (this.height - drawH) / 2
+      }
+
+      ctx.drawImage(image, drawX, drawY, drawW, drawH)
+      ctx.fillStyle = 'rgba(244, 252, 255, 0.78)'
+      ctx.fillRect(0, 0, this.width, this.height)
+      return
+    }
+
+    ctx.fillStyle = UITheme.colors.background
+    ctx.fillRect(0, 0, this.width, this.height)
   }
 
   getRestartText(state) {
@@ -1214,17 +1318,20 @@ export default class BattleScene extends BaseScene {
     const meta = this.currentChallengeLevel
     if (!meta) return
 
-    const text = `\u95ef\u5173 ${meta.index}/20  \u8bc4\u5206 ${meta.score}  ${this.getAiDifficultyLabel(meta.aiDifficulty)}`
+    const text = `\u95ef\u5173 ${meta.index}/${this.challengeLevels.length || 99}  \u8bc4\u5206 ${meta.score}  ${this.getAiDifficultyLabel(meta.aiDifficulty)}`
     const x = this.width / 2
-    const y = this.safeLayout.insets.top + 92
+    const y = this.backButton.y + this.backButton.height / 2
     const w = Math.min(this.width - 170, 260)
     const h = 34
 
     ctx.save()
-    this._roundRect(ctx, x - w / 2, y - h / 2, w, h, 8)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+    this._roundRect(ctx, x - w / 2, y - h / 2, w, h, UITheme.radius.md)
+    ctx.fillStyle = UITheme.colors.surface
     ctx.fill()
-    ctx.fillStyle = '#444444'
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = UITheme.colors.text
     ctx.font = 'bold 13px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -1245,6 +1352,8 @@ export default class BattleScene extends BaseScene {
    * @param {'top'|'bottom'} position
    */
     drawPlayerCard(playerId, state, position) {
+      this.drawCompactPlayerCard(playerId, state)
+      return
       const ctx = this.ctx
       const W = this.width
       const H = this.height
@@ -1267,13 +1376,16 @@ export default class BattleScene extends BaseScene {
       ctx.save()
     
       // ── 卡片底色 ──────────────────────────────────────────
-      this._roundRect(ctx, cardX, cardY, cardW, cardH, 5)
-      ctx.fillStyle = '#FFFFFF'
+      this._roundRect(ctx, cardX, cardY, cardW, cardH, UITheme.radius.md)
+      ctx.fillStyle = UITheme.colors.surface
       ctx.fill()
+      ctx.strokeStyle = isCurrent ? color : UITheme.colors.line
+      ctx.lineWidth = 1
+      ctx.stroke()
     
       // Highlight current turn.
       if (isCurrent) {
-        this._roundRectLeft(ctx, cardX, cardY, 6, cardH, 14)
+        this._roundRectLeft(ctx, cardX, cardY, 6, cardH, UITheme.radius.md)
         ctx.fillStyle = color
         ctx.fill()
       }
@@ -1292,7 +1404,7 @@ export default class BattleScene extends BaseScene {
       const nameX = cardX + 58
       const nameY = cardY + cardH / 2 - 10
     
-      ctx.fillStyle = '#222222'
+      ctx.fillStyle = UITheme.colors.text
       ctx.font = 'bold 18px Arial'
       ctx.textAlign = 'left'
       ctx.textBaseline = 'middle'
@@ -1320,7 +1432,7 @@ export default class BattleScene extends BaseScene {
         ctx.fillStyle = color
         ctx.fill()
     
-        ctx.fillStyle = '#FFFFFF'
+        ctx.fillStyle = UITheme.colors.surface
         ctx.font = 'bold 11px Arial'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
@@ -1343,7 +1455,7 @@ export default class BattleScene extends BaseScene {
       ctx.fillText(`${score}`, cardX + cardW - 56, cardY + cardH / 2)
     
       ctx.font = '13px Arial'
-      ctx.fillStyle = '#999999'
+      ctx.fillStyle = UITheme.colors.muted
       ctx.fillText(`/ ${total}`, cardX + cardW - 18, cardY + cardH / 2)
     
       // Score progress bar.
@@ -1353,7 +1465,7 @@ export default class BattleScene extends BaseScene {
       const barH = 4
     
       this._roundRect(ctx, barX, barY, barW, barH, 2)
-      ctx.fillStyle = '#E0E0E0'
+      ctx.fillStyle = UITheme.colors.line
       ctx.fill()
     
       const ratio = total > 0 ? score / total : 0
@@ -1366,6 +1478,98 @@ export default class BattleScene extends BaseScene {
     
       ctx.restore()
     }
+
+  drawCompactPlayerCard(playerId, state) {
+    const ctx = this.ctx
+    const cardW = Math.min(132, (this.width - 54) / 2)
+    const cardH = 58
+    const cardX = playerId === 'p1' ? 14 : this.width - cardW - 14
+    const cardY = this.safeLayout.top
+    const color = PLAYER_COLORS[playerId]
+    const score = state.scores[playerId] ?? 0
+    const total = this.engine.getMaxScore()
+    const ratio = total > 0 ? score / total : 0
+    const name = this.getPlayerDisplayName(playerId)
+    const avatar = playerId === 'p1' ? 'avatarBlue' : 'avatarRed'
+    const isCurrent = state.currentPlayerId === playerId && state.status !== 'finished'
+    const isMe = this.mode === 'online' && this.localPlayerId === playerId
+
+    ctx.save()
+    this._roundRect(ctx, cardX, cardY, cardW, cardH, 8)
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.strokeStyle = isCurrent ? UITheme.colors.warning : 'rgba(255,255,255,0.65)'
+    ctx.lineWidth = isCurrent ? 2 : 1
+    ctx.stroke()
+
+    if (isCurrent) {
+      ctx.fillStyle = UITheme.colors.warning
+      ctx.beginPath()
+      ctx.arc(cardX + cardW - 14, cardY + 12, 5, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    if (!drawImageAsset(ctx, avatar, cardX + 6, cardY + 8, 42, 42)) {
+      ctx.fillStyle = UITheme.colors.surface
+      ctx.beginPath()
+      ctx.arc(cardX + 27, cardY + 29, 19, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    ctx.fillStyle = '#FFFFFF'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    this._drawFittedText(name, cardX + 50, cardY + 17, cardW - 86, 12, 9, 'bold')
+
+    ctx.font = 'bold 10px Arial'
+    if (isMe) {
+      ctx.fillStyle = 'rgba(255,255,255,0.24)'
+      this._roundRect(ctx, cardX + 50, cardY + 27, 30, 16, 8)
+      ctx.fill()
+      ctx.fillStyle = '#FFFFFF'
+      ctx.textAlign = 'center'
+      ctx.fillText('\u6211', cardX + 65, cardY + 35)
+    } else if (isCurrent) {
+      ctx.fillStyle = UITheme.colors.warning
+      ctx.fillText('\u56de\u5408', cardX + 50, cardY + 35)
+    }
+
+    ctx.textAlign = 'right'
+    ctx.font = 'bold 28px Arial'
+    ctx.fillStyle = '#FFFFFF'
+    ctx.fillText(`${score}`, cardX + cardW - 12, cardY + 37)
+
+    const barX = cardX + 50
+    const barY = cardY + cardH - 8
+    const barW = cardW - 62
+    this._roundRect(ctx, barX, barY, barW, 4, 2)
+    ctx.fillStyle = 'rgba(255,255,255,0.28)'
+    ctx.fill()
+    if (ratio > 0) {
+      this._roundRect(ctx, barX, barY, barW * ratio, 4, 2)
+      ctx.fillStyle = UITheme.colors.warning
+      ctx.fill()
+    }
+    ctx.restore()
+  }
+
+  drawCompactBackButton() {
+    const ctx = this.ctx
+    const b = this.backButton
+    ctx.save()
+    this._roundRect(ctx, b.x, b.y, b.width, b.height, UITheme.radius.md)
+    ctx.fillStyle = 'rgba(255,255,255,0.9)'
+    ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = 'bold 24px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('\u2039', b.x + b.width / 2, b.y + b.height / 2 - 1)
+    ctx.restore()
+  }
 
     /**
  * 四角均为圆角的矩形路径（兼容微信小游戏）
@@ -1402,23 +1606,28 @@ export default class BattleScene extends BaseScene {
   }
 
   drawBackButton() {
+    this.drawCompactBackButton()
+    return
     const ctx = this.ctx
     const b = this.backButton
 
     ctx.save()
 
     // ── 白色圆角卡片底色 ────────────────────────────────────
-    this._roundRect(ctx, b.x, b.y, b.width, b.height, 10)
-    ctx.fillStyle = '#FFFFFF'
+    this._roundRect(ctx, b.x, b.y, b.width, b.height, UITheme.radius.md)
+    ctx.fillStyle = UITheme.colors.surface
     ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
 
     // ── 左侧红色竖条（与玩家卡片语言一致）──────────────────
-    this._roundRectLeft(ctx, b.x, b.y, 5, b.height, 10)
-  ctx.fillStyle = '#4A90E2'
+    this._roundRectLeft(ctx, b.x, b.y, 5, b.height, UITheme.radius.md)
+  ctx.fillStyle = UITheme.colors.primary
   ctx.fill()
 
   // ── 箭头 + 文字 ─────────────────────────────────────────
-  ctx.fillStyle = '#444444'
+  ctx.fillStyle = UITheme.colors.text
   ctx.font = 'bold 15px Arial'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -1452,21 +1661,295 @@ export default class BattleScene extends BaseScene {
 
     ctx.save()
 
-    this._roundRect(ctx, button.x, button.y, button.width, button.height, 10)
-    ctx.fillStyle = enabled ? '#FFFFFF' : 'rgba(255, 255, 255, 0.65)'
+    this._roundRect(ctx, button.x, button.y, button.width, button.height, UITheme.radius.md)
+    ctx.fillStyle = enabled ? UITheme.colors.surface : 'rgba(255, 255, 255, 0.68)'
+    ctx.fill()
+    ctx.strokeStyle = enabled ? UITheme.colors.warning : UITheme.colors.disabled
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    this._roundRectLeft(ctx, button.x, button.y, 5, button.height, UITheme.radius.md)
+    ctx.fillStyle = enabled ? UITheme.colors.warning : UITheme.colors.disabled
     ctx.fill()
 
-    this._roundRectLeft(ctx, button.x, button.y, 5, button.height, 10)
-    ctx.fillStyle = enabled ? '#F5A623' : '#BDBDBD'
-    ctx.fill()
-
-    ctx.fillStyle = enabled ? '#444444' : '#999999'
+    ctx.fillStyle = enabled ? UITheme.colors.text : UITheme.colors.muted
     ctx.font = 'bold 15px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(text, button.x + button.width / 2 + 2, button.y + button.height / 2)
 
     ctx.restore()
+  }
+
+  updateComboChain(result, playerId) {
+    const closedCount = result && Array.isArray(result.closedCells)
+      ? result.closedCells.length
+      : 0
+
+    if (closedCount <= 0) {
+      this.comboChain = {
+        playerId: null,
+        count: 0
+      }
+      return
+    }
+
+    if (this.comboChain.playerId === playerId && this.comboChain.count > 0) {
+      this.comboChain.count += 1
+    } else {
+      this.comboChain = {
+        playerId,
+        count: 1
+      }
+    }
+
+    if (this.comboChain.count >= 3) {
+      this.playComboAnimation(this.comboChain.count, playerId)
+    }
+  }
+
+  playComboAnimation(comboCount, playerId) {
+    if (comboCount < 3) return
+
+    this.comboAnimations.push({
+      text: `COMBOX${comboCount}`,
+      playerId,
+      time: 0,
+      duration: 880
+    })
+  }
+
+  updateComboAnimations(deltaTime) {
+    for (let i = this.comboAnimations.length - 1; i >= 0; i--) {
+      const item = this.comboAnimations[i]
+      item.time += deltaTime
+      if (item.time >= item.duration) {
+        this.comboAnimations.splice(i, 1)
+      }
+    }
+  }
+
+  playActionSounds(result) {
+    if (!result || !result.success) return
+
+    this.playSound('claim')
+
+    if (Array.isArray(result.closedCells) && result.closedCells.length > 0) {
+      this.playSoundDelayed('close', 35)
+      this.vibrateShortDelayed(35)
+    }
+  }
+
+  playRoomStateDiffSounds({ previousEdgeCount, nextEdgeCount, previousCellCount, nextCellCount }) {
+    if (nextEdgeCount > previousEdgeCount) {
+      this.playSound('claim')
+    }
+
+    if (nextCellCount > previousCellCount) {
+      this.playSoundDelayed('close', 35)
+      this.vibrateShortDelayed(35)
+    }
+  }
+
+  playGameEndSound(previousStatus) {
+    const state = this.engine.getState()
+    if (!state || previousStatus === 'finished' || state.status !== 'finished') return
+
+    const perspective = this.getEndSoundPerspective()
+    const soundKey = `${this.getLocalStateKey()}:${perspective}`
+    if (soundKey === this.lastGameEndSoundKey) return
+
+    this.lastGameEndSoundKey = soundKey
+
+    if (!state.winnerId) return
+
+    const won = state.winnerId === perspective
+    this.playSoundDelayed(won ? 'win' : 'lose', 120)
+
+    if (won) {
+      this.vibrateWinDelayed(120)
+    }
+  }
+
+  getEndSoundPerspective() {
+    if (this.mode === 'online') {
+      return this.localPlayerId || 'p1'
+    }
+
+    return 'p1'
+  }
+
+  getClaimedEdgeCount() {
+    let count = 0
+
+    for (const edge of this.engine.board.edges.values()) {
+      if (edge.ownerId) count += 1
+    }
+
+    return count
+  }
+
+  getOwnedCellCount() {
+    let count = 0
+
+    for (const cell of this.engine.board.cells.values()) {
+      if (cell.ownerId) count += 1
+    }
+
+    return count
+  }
+
+  playSound(name) {
+    SoundEffects.play(name)
+  }
+
+  playButtonSound() {
+    this.playSound('button')
+  }
+
+  playSoundDelayed(name, delay) {
+    const timer = setTimeout(() => {
+      const index = this.soundTimers.indexOf(timer)
+      if (index >= 0) {
+        this.soundTimers.splice(index, 1)
+      }
+      SoundEffects.play(name)
+    }, delay)
+
+    this.soundTimers.push(timer)
+  }
+
+  vibrateShortDelayed(delay) {
+    const timer = setTimeout(() => {
+      const index = this.soundTimers.indexOf(timer)
+      if (index >= 0) {
+        this.soundTimers.splice(index, 1)
+      }
+      this.vibrateShort()
+    }, delay)
+
+    this.soundTimers.push(timer)
+  }
+
+  vibrateWinDelayed(delay) {
+    const timer = setTimeout(() => {
+      const index = this.soundTimers.indexOf(timer)
+      if (index >= 0) {
+        this.soundTimers.splice(index, 1)
+      }
+
+      const settings = getGameSettings()
+      if (!settings.vibrationEnabled) return
+
+      if (typeof wx !== 'undefined' && wx && typeof wx.vibrateLong === 'function') {
+        wx.vibrateLong()
+        return
+      }
+
+      this.vibrateShort()
+    }, delay)
+
+    this.soundTimers.push(timer)
+  }
+
+  vibrateShort(type = null) {
+    const settings = getGameSettings()
+    if (!settings.vibrationEnabled) return
+    if (typeof wx === 'undefined' || !wx || typeof wx.vibrateShort !== 'function') return
+
+    try {
+      wx.vibrateShort({ type: type || 'medium' })
+    } catch (err) {
+      try {
+        wx.vibrateShort()
+      } catch (fallbackErr) {
+        console.warn('vibrate short failed:', fallbackErr)
+      }
+    }
+  }
+
+  clearSoundTimers() {
+    for (const timer of this.soundTimers) {
+      clearTimeout(timer)
+    }
+
+    this.soundTimers = []
+  }
+
+  drawComboAnimations() {
+    if (!this.comboAnimations.length) return
+
+    const combo = this.comboAnimations[this.comboAnimations.length - 1]
+    const t = Math.min(1, combo.time / combo.duration)
+    const intro = Math.min(1, t / 0.22)
+    const outro = t > 0.68 ? 1 - (t - 0.68) / 0.32 : 1
+    const alpha = Math.max(0, Math.min(1, intro * outro))
+    const scale = 0.86 + 0.18 * this.easeOutBack(intro)
+    const lift = 12 * t
+    const color = PLAYER_COLORS[combo.playerId] || UITheme.colors.primary
+    const w = Math.max(128, Math.min(188, this.width - 116))
+    const h = 34
+    const y = this.getComboAnimationY() - lift
+    const ctx = this.ctx
+
+    ctx.save()
+    ctx.globalAlpha = alpha
+    ctx.translate(this.width / 2, y + h / 2)
+    ctx.scale(scale, scale)
+
+    this._roundRect(ctx, -w / 2, -h / 2, w, h, UITheme.radius.md)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+    ctx.fill()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    ctx.fillStyle = color
+    ctx.font = 'bold 22px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(combo.text, 0, 1)
+
+    ctx.restore()
+  }
+
+  getComboAnimationY() {
+    const controlsBottom = Math.max(
+      this.backButton.y + this.backButton.height,
+      this.safeLayout.top + 58
+    )
+    const boardTop = this.getBoardVisualTop()
+    const gapTop = controlsBottom + 8
+    const gapBottom = boardTop - 40
+
+    if (gapBottom >= gapTop) {
+      return (gapTop + gapBottom) / 2
+    }
+
+    return Math.min(
+      boardTop + 10,
+      this.height - this.safeLayout.bottom - 166
+    )
+  }
+
+  getBoardVisualTop() {
+    if (this.boardType === 'hex') {
+      const radius = 3
+      return this.layout.originY - this.layout.cellSize * (1.5 * (radius - 1) + 1)
+    }
+
+    if (this.boardType === 'mixed-shape') {
+      return this.layout.originY
+    }
+
+    return this.layout.originY
+  }
+
+  easeOutBack(t) {
+    t = Math.min(1, Math.max(0, t))
+    const c1 = 1.70158
+    const c3 = c1 + 1
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2)
   }
 
   drawTurnCover() {
@@ -1476,10 +1959,21 @@ export default class BattleScene extends BaseScene {
 
     ctx.save()
 
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
+    ctx.fillStyle = 'rgba(24, 50, 74, 0.72)'
     ctx.fillRect(0, 0, this.width, this.height)
 
-    ctx.fillStyle = '#FFFFFF'
+    const panelW = Math.min(this.width - 64, 300)
+    const panelH = 136
+    const panelX = (this.width - panelW) / 2
+    const panelY = this.height / 2 - panelH / 2
+    this._roundRect(ctx, panelX, panelY, panelW, panelH, UITheme.radius.lg)
+    ctx.fillStyle = UITheme.colors.surface
+    ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    ctx.fillStyle = UITheme.colors.text
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
 
@@ -1487,6 +1981,7 @@ export default class BattleScene extends BaseScene {
     ctx.fillText(`\u5207\u6362\u5230${playerName}`, this.width / 2, this.height / 2 - 24)
 
     ctx.font = '18px Arial'
+    ctx.fillStyle = UITheme.colors.muted
     ctx.fillText('\u70b9\u51fb\u4efb\u610f\u5904\u7ee7\u7eed', this.width / 2, this.height / 2 + 24)
     ctx.restore()
   }

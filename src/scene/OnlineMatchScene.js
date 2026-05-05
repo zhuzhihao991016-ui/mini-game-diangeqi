@@ -2,6 +2,8 @@ import BaseScene from './BaseScene'
 import BattleScene from './BattleScene'
 import MenuScene from './MenuScene'
 import { getSceneSafeLayout } from '../utils/SafeArea'
+import SoundEffects from '../assets/SoundEffects'
+import UITheme from '../ui/theme'
 
 export default class OnlineMatchScene extends BaseScene {
   constructor({
@@ -36,10 +38,10 @@ export default class OnlineMatchScene extends BaseScene {
     this.safeLayout = getSceneSafeLayout(this.width, this.height)
 
     this.backButton = {
-      x: 20,
+      x: UITheme.menu.pageX,
       y: this.safeLayout.top,
-      width: 120,
-      height: 44
+      width: UITheme.menu.backW,
+      height: UITheme.menu.backH
     }
   }
 
@@ -52,6 +54,7 @@ export default class OnlineMatchScene extends BaseScene {
 
     this.inputManager.onTouchStart((x, y) => {
       if (this.isBackButtonHit(x, y)) {
+        SoundEffects.play('button')
         this.sceneManager.setScene(new MenuScene({
           canvas: this.canvas,
           ctx: this.ctx,
@@ -136,17 +139,17 @@ export default class OnlineMatchScene extends BaseScene {
   render() {
     const ctx = this.ctx
 
-    ctx.fillStyle = '#EFEFEF'
+    ctx.fillStyle = UITheme.colors.background
     ctx.fillRect(0, 0, this.width, this.height)
 
-    ctx.fillStyle = '#222'
-    ctx.font = 'bold 26px Arial'
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = `bold ${UITheme.menu.titleFont}px Arial`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('联网对战', this.width / 2, this.y(150))
+    ctx.fillText('联网对战', this.width / 2, this.safeLayout.top + 17)
 
-    ctx.fillStyle = '#777'
-    ctx.font = '16px Arial'
+    ctx.fillStyle = UITheme.colors.muted
+    ctx.font = '14px Arial'
     ctx.fillText(this.statusText, this.width / 2, this.y(220))
 
     if (this.roomId) {
@@ -173,14 +176,32 @@ export default class OnlineMatchScene extends BaseScene {
     const b = this.backButton
 
     ctx.save()
-    ctx.fillStyle = '#FFFFFF'
-    ctx.fillRect(b.x, b.y, b.width, b.height)
-
-    ctx.fillStyle = '#444'
-    ctx.font = 'bold 15px Arial'
+    this.roundRect(ctx, b.x, b.y, b.width, b.height, UITheme.radius.md)
+    ctx.fillStyle = UITheme.colors.surface
+    ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = `bold ${UITheme.menu.compactFont}px Arial`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('← 返回', b.x + b.width / 2, b.y + b.height / 2)
+    ctx.fillText('\u2039', b.x + b.width / 2, b.y + b.height / 2)
     ctx.restore()
+  }
+
+  roundRect(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2)
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.lineTo(x + w - r, y)
+    ctx.arcTo(x + w, y, x + w, y + r, r)
+    ctx.lineTo(x + w, y + h - r)
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r)
+    ctx.lineTo(x + r, y + h)
+    ctx.arcTo(x, y + h, x, y + h - r, r)
+    ctx.lineTo(x, y + r)
+    ctx.arcTo(x, y, x + r, y, r)
+    ctx.closePath()
   }
 }

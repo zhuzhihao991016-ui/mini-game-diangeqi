@@ -1,5 +1,29 @@
 {
   "appid": "wx7c3e92dc125873b3",
+  "packOptions": {
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "online-server"
+      },
+      {
+        "type": "folder",
+        "value": "docs"
+      },
+      {
+        "type": "file",
+        "value": "online-server.zip"
+      },
+      {
+        "type": "file",
+        "value": "AGENTS.md"
+      },
+      {
+        "type": "file",
+        "value": "文件树.txt"
+      }
+    ]
+  },
   "setting": {
     "enhance": true,
     "es6": true

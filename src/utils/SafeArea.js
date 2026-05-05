@@ -25,12 +25,31 @@ export function getSafeAreaInsets(width = 0, height = 0) {
   }
 }
 
+export function getMenuButtonRect() {
+  if (typeof wx === 'undefined' || !wx.getMenuButtonBoundingClientRect) {
+    return null
+  }
+
+  try {
+    const rect = wx.getMenuButtonBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null
+    return rect
+  } catch (err) {
+    return null
+  }
+}
+
 export function getSceneSafeLayout(width, height) {
   const insets = getSafeAreaInsets(width, height)
+  const menuButton = getMenuButtonRect()
+  const top = menuButton
+    ? Math.max(insets.top + 18, menuButton.bottom + 8)
+    : insets.top + 18
 
   return {
     insets,
-    top: insets.top + 18,
+    menuButton,
+    top,
     bottom: insets.bottom + 24
   }
 }

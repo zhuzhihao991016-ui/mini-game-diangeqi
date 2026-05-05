@@ -1,6 +1,9 @@
+import UITheme from '../ui/theme'
+import { drawImageAsset, preloadImageAssets } from '../assets/ImageAssets'
+
 const PLAYER_COLORS = {
-  p1: '#4A90E2',
-  p2: '#E24A4A'
+  p1: UITheme.colors.p1,
+  p2: UITheme.colors.p2
 }
 
 const PLAYER_NAMES = {
@@ -20,6 +23,7 @@ export default class GameOverPanel {
     this.restartButton = { x: 0, y: 0, width: 200, height: 52 }
     this.menuButton = { x: 0, y: 0, width: 200, height: 52 }
     this.playerNames = { ...PLAYER_NAMES }
+    preloadImageAssets()
   }
 
   draw(state, options = {}) {
@@ -31,29 +35,38 @@ export default class GameOverPanel {
     this.playerNames = { ...PLAYER_NAMES, ...(options.playerNames || {}) }
 
     ctx.save()
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
+    ctx.fillStyle = 'rgba(24, 50, 74, 0.58)'
     ctx.fillRect(0, 0, W, H)
 
     const panelW = Math.min(W - 32, 360)
-    const panelH = Math.min(Math.max(392, H * 0.56), H - 56)
+    const compact = H < 680
+    const panelH = Math.min(Math.max(compact ? 344 : 392, H * (compact ? 0.62 : 0.56)), H - 40)
     const panelX = (W - panelW) / 2
-    const panelY = Math.max(28, (H - panelH) / 2)
+    const panelY = Math.max(20, (H - panelH) / 2)
     const accentColor = state.winnerId ? PLAYER_COLORS[state.winnerId] : '#AAAAAA'
     const padding = Math.max(18, Math.min(24, panelW * 0.07))
 
-    this._roundRect(ctx, panelX, panelY, panelW, panelH, 14)
-    ctx.fillStyle = '#FFFFFF'
+    this._roundRect(ctx, panelX, panelY, panelW, panelH, UITheme.radius.lg)
+    ctx.fillStyle = UITheme.colors.surface
     ctx.fill()
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
 
-    this._roundRectTop(ctx, panelX, panelY, panelW, 6, 14)
+    this._roundRectTop(ctx, panelX, panelY, panelW, 6, UITheme.radius.lg)
     ctx.fillStyle = accentColor
     ctx.fill()
 
-    ctx.fillStyle = '#222222'
+    ctx.fillStyle = UITheme.colors.text
     ctx.font = `bold 22px ${FONT_FAMILY}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('\u6e38\u620f\u7ed3\u675f', W / 2, panelY + 42)
+    ctx.fillText('\u6e38\u620f\u7ed3\u675f', W / 2, panelY + (compact ? 32 : 42))
+    if (!compact) {
+      drawImageAsset(ctx, 'crown', W / 2 - 26, panelY + 55, 52, 52)
+    } else {
+      drawImageAsset(ctx, 'crown', W / 2 - 18, panelY + 42, 36, 36)
+    }
 
     let resultText = '\u52bf\u5747\u529b\u654c\uff0c\u5e73\u5c40\uff01'
     if (state.winnerId) {
@@ -62,12 +75,12 @@ export default class GameOverPanel {
 
     ctx.font = `bold 25px ${FONT_FAMILY}`
     ctx.fillStyle = accentColor
-    this._drawFittedText(resultText, W / 2, panelY + 90, panelW - padding * 2, 25, 18, 'bold')
+    this._drawFittedText(resultText, W / 2, panelY + (compact ? 90 : 116), panelW - padding * 2, compact ? 22 : 25, 16, 'bold')
 
-    const cardY = panelY + 122
+    const cardY = panelY + (compact ? 112 : 148)
     const cardGap = 10
     const cardW = (panelW - padding * 2 - cardGap) / 2
-    const cardH = 100
+    const cardH = compact ? 82 : 100
     const playerIds = Object.keys(state.scores)
 
     playerIds.forEach((pid, index) => {
@@ -79,7 +92,7 @@ export default class GameOverPanel {
       const isMe = localPlayerId === pid
 
       this._roundRect(ctx, cardX, cardY, cardW, cardH, 8)
-      ctx.fillStyle = isWinner ? color : '#F7F8FA'
+      ctx.fillStyle = isWinner ? color : UITheme.colors.surfaceTint
       ctx.fill()
 
       if (!isWinner) {
@@ -88,48 +101,50 @@ export default class GameOverPanel {
         ctx.fill()
       }
 
-      const trophyY = cardY + 20
-      const nameY = isWinner ? cardY + 43 : cardY + 31
+      const trophyY = cardY + (compact ? 16 : 20)
+      const nameY = isWinner ? cardY + (compact ? 35 : 43) : cardY + (compact ? 25 : 31)
 
       if (isWinner) {
         ctx.font = `22px ${FONT_FAMILY}`
-        ctx.fillStyle = '#FFD700'
+        ctx.fillStyle = UITheme.colors.warning
         ctx.fillText(TROPHY_SYMBOL, cardX + cardW / 2, trophyY)
       }
 
       ctx.font = `bold 15px ${FONT_FAMILY}`
-      ctx.fillStyle = isWinner ? 'rgba(255,255,255,0.9)' : '#666666'
+      ctx.fillStyle = isWinner ? 'rgba(255,255,255,0.92)' : UITheme.colors.muted
       this._drawFittedText(name, cardX + cardW / 2, nameY, cardW - 18, 15, 11, 'bold')
 
       if (isMe) {
         const tagW = 42
         const tagH = 18
         const tagX = cardX + cardW / 2 - tagW / 2
-        const tagY = cardY + 53
+        const tagY = cardY + (compact ? 42 : 53)
         this._roundRect(ctx, tagX, tagY, tagW, tagH, 9)
         ctx.fillStyle = isWinner ? 'rgba(255,255,255,0.22)' : color
         ctx.fill()
         ctx.font = `bold 12px ${FONT_FAMILY}`
-        ctx.fillStyle = '#FFFFFF'
+        ctx.fillStyle = UITheme.colors.surface
         ctx.fillText('\u6211', tagX + tagW / 2, tagY + tagH / 2 + 1)
       }
 
-      ctx.font = `bold 30px ${FONT_FAMILY}`
-      ctx.fillStyle = isWinner ? '#FFFFFF' : color
-      ctx.fillText(`${score}`, cardX + cardW / 2, cardY + cardH - 18)
+      ctx.font = `bold ${compact ? 25 : 30}px ${FONT_FAMILY}`
+      ctx.fillStyle = isWinner ? UITheme.colors.surface : color
+      ctx.fillText(`${score}`, cardX + cardW / 2, cardY + cardH - (compact ? 14 : 18))
     })
 
     const btnW = panelW - padding * 2
-    const btnH = 48
+    const btnH = compact ? 42 : 48
     const btnX = panelX + padding
-    const restartBtnY = panelY + panelH - 24 - btnH * 2 - 12
-    const menuBtnY = panelY + panelH - 24 - btnH
+    const bottomPad = compact ? 16 : 24
+    const btnGap = compact ? 8 : 12
+    const restartBtnY = panelY + panelH - bottomPad - btnH * 2 - btnGap
+    const menuBtnY = panelY + panelH - bottomPad - btnH
 
     this.restartButton = { x: btnX, y: restartBtnY, width: btnW, height: btnH }
     this.menuButton = { x: btnX, y: menuBtnY, width: btnW, height: btnH }
 
     this._drawButton({ x: btnX, y: restartBtnY, width: btnW, height: btnH, text: restartText, color: accentColor, textColor: '#FFFFFF' })
-    this._drawButton({ x: btnX, y: menuBtnY, width: btnW, height: btnH, text: '\u8fd4\u56de\u83dc\u5355', color: '#F5F5F5', textColor: '#444444', leftColor: accentColor })
+    this._drawButton({ x: btnX, y: menuBtnY, width: btnW, height: btnH, text: '\u8fd4\u56de\u83dc\u5355', color: UITheme.colors.surfaceTint, textColor: UITheme.colors.text, leftColor: accentColor })
     ctx.restore()
   }
 
@@ -140,10 +155,10 @@ export default class GameOverPanel {
 
   _drawButton({ x, y, width, height, text, color, textColor, leftColor = 'rgba(0,0,0,0.15)' }) {
     const ctx = this.ctx
-    this._roundRect(ctx, x, y, width, height, 12)
+    this._roundRect(ctx, x, y, width, height, UITheme.radius.md)
     ctx.fillStyle = color
     ctx.fill()
-    this._roundRectLeft(ctx, x, y, 6, height, 12)
+    this._roundRectLeft(ctx, x, y, 6, height, UITheme.radius.md)
     ctx.fillStyle = leftColor
     ctx.fill()
     ctx.fillStyle = textColor

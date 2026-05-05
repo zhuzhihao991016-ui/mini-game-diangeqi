@@ -2,9 +2,12 @@ import BaseScene from './BaseScene'
 import MenuScene from './MenuScene'
 import BattleScene from './BattleScene'
 import { getSceneSafeLayout } from '../utils/SafeArea'
+import UITheme from '../ui/theme'
+import { drawImageAsset, preloadImageAssets } from '../assets/ImageAssets'
+import SoundEffects from '../assets/SoundEffects'
 
-const BRAND_COLOR = '#4A90E2'
-const DANGER_COLOR = '#E24A4A'
+const BRAND_COLOR = UITheme.colors.primary
+const DANGER_COLOR = UITheme.colors.danger
 
 const T = {
   chooseOnline: '\u8bf7\u9009\u62e9\u8054\u673a\u65b9\u5f0f',
@@ -86,7 +89,13 @@ export default class OnlineRoomScene extends BaseScene {
     this.enteredBattle = false
     this.readySentForRoomId = ''
     this.safeLayout = getSceneSafeLayout(this.width, this.height)
-    this.backButton = { x: 20, y: this.safeLayout.top, width: 110, height: 40 }
+    this.backButton = {
+      x: UITheme.menu.pageX,
+      y: this.safeLayout.top,
+      width: UITheme.menu.backW,
+      height: UITheme.menu.backH
+    }
+    preloadImageAssets()
   }
 
   y(value) {
@@ -100,6 +109,7 @@ export default class OnlineRoomScene extends BaseScene {
     this.enableShareMenu()
     this.inputManager.onTouchStart((x, y) => {
       if (this.isBackButtonHit(x, y)) {
+        SoundEffects.play('button')
         this.back()
         return
       }
@@ -141,8 +151,8 @@ export default class OnlineRoomScene extends BaseScene {
 
   render() {
     const ctx = this.ctx
-    ctx.fillStyle = '#EFEFEF'
-    ctx.fillRect(0, 0, this.width, this.height)
+
+    this.drawBackground()
     this.drawTitle()
     this.drawStatus()
     this.drawRoomInfo()
@@ -167,19 +177,23 @@ export default class OnlineRoomScene extends BaseScene {
     this.statusText = T.chooseOnline
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(230), width: w, height: h, text: T.createFriend, accentColor: BRAND_COLOR, onClick: () => this.createFriendRoom() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(305), width: w, height: h, text: T.joinFriend, accentColor: BRAND_COLOR, onClick: () => this.showJoinInput() }))
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const startY = this.getVerticalListStartY(2, h, UITheme.menu.gap, this.y(190))
+    const gap = this.getVerticalListGap(startY, 2, h, UITheme.menu.gap, UITheme.menu.gap)
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY, width: w, height: h, text: T.createFriend, subText: '\u521b\u5efa\u623f\u95f4\uff0c\u9080\u8bf7\u597d\u53cb', accentColor: BRAND_COLOR, icon: 'create', onClick: () => this.createFriendRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + h + gap, width: w, height: h, text: T.joinFriend, subText: '\u8f93\u5165\u623f\u95f4\u53f7\u52a0\u5165', accentColor: UITheme.colors.secondary, icon: 'join', onClick: () => this.showJoinInput() }))
   }
 
   showInviteJoinButtons() {
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(300), width: w, height: h, text: T.joinFriend, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(375), width: w, height: h, text: T.back, accentColor: DANGER_COLOR, onClick: () => this.buildHomeButtons() }))
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const startY = this.getVerticalListStartY(2, h, UITheme.menu.gap, this.y(260))
+    const gap = this.getVerticalListGap(startY, 2, h, UITheme.menu.gap, UITheme.menu.gap)
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY, width: w, height: h, text: T.joinFriend, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + h + gap, width: w, height: h, text: T.back, accentColor: DANGER_COLOR, onClick: () => this.buildHomeButtons() }))
   }
 
   async createFriendRoom() {
@@ -210,10 +224,12 @@ export default class OnlineRoomScene extends BaseScene {
     this.statusText = T.enterRoomId
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(260), width: w, height: h, text: T.inputRoomId, accentColor: BRAND_COLOR, onClick: () => this.promptRoomId() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(335), width: w, height: h, text: T.joinRoom, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const startY = this.getVerticalListStartY(2, h, UITheme.menu.gap, this.y(210))
+    const gap = this.getVerticalListGap(startY, 2, h, UITheme.menu.gap, UITheme.menu.gap)
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY, width: w, height: h, text: T.inputRoomId, accentColor: BRAND_COLOR, onClick: () => this.promptRoomId() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + h + gap, width: w, height: h, text: T.joinRoom, accentColor: BRAND_COLOR, onClick: () => this.joinFriendRoom() }))
   }
 
   promptRoomId() {
@@ -260,11 +276,13 @@ export default class OnlineRoomScene extends BaseScene {
   buildWaitingButtons() {
     this.buttons = []
     const cx = this.width / 2
-    const w = this.width - 40
-    const h = 58
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(300), width: w, height: h, text: T.share, accentColor: BRAND_COLOR, onClick: () => this.shareRoom() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(375), width: w, height: h, text: T.copy, accentColor: BRAND_COLOR, onClick: () => this.copyRoomId() }))
-    this.buttons.push(this.createCard({ x: cx - w / 2, y: this.y(450), width: w, height: h, text: T.cancel, accentColor: DANGER_COLOR, onClick: () => this.cancelRoom() }))
+    const w = this.getMenuCardWidth()
+    const h = UITheme.menu.cardH
+    const startY = this.getVerticalListStartY(3, h, UITheme.menu.gap, this.y(280))
+    const gap = this.getVerticalListGap(startY, 3, h, UITheme.menu.gap, UITheme.menu.gap)
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY, width: w, height: h, text: T.share, accentColor: BRAND_COLOR, onClick: () => this.shareRoom() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + h + gap, width: w, height: h, text: T.copy, accentColor: BRAND_COLOR, onClick: () => this.copyRoomId() }))
+    this.buttons.push(this.createCard({ x: cx - w / 2, y: startY + (h + gap) * 2, width: w, height: h, text: T.cancel, accentColor: DANGER_COLOR, onClick: () => this.cancelRoom() }))
   }
 
   shareRoom() {
@@ -432,71 +450,181 @@ export default class OnlineRoomScene extends BaseScene {
 
   drawTitle() {
     const ctx = this.ctx
-    ctx.fillStyle = '#222222'
-    ctx.font = 'bold 28px Arial'
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = `bold ${UITheme.menu.titleFont}px Arial`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(T.title, this.width / 2, this.y(120))
+    ctx.fillText(T.title, this.width / 2, this.safeLayout.top + 17)
+
+    if (this.page === 'home') {
+      const avatarY = Math.max(this.y(86), this.safeLayout.top + 56)
+      drawImageAsset(ctx, 'avatarBlue', this.width / 2 - 88, avatarY, 82, 82)
+      drawImageAsset(ctx, 'avatarRed', this.width / 2 + 8, avatarY, 82, 82)
+    }
   }
 
   drawStatus() {
     const ctx = this.ctx
-    ctx.fillStyle = '#777777'
-    ctx.font = '15px Arial'
+    ctx.fillStyle = UITheme.colors.muted
+    ctx.font = '14px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(this.statusText, this.width / 2, this.y(175))
+    this.drawFittedText(ctx, this.statusText, this.width / 2, this.y(this.page === 'home' ? 166 : 122), this.width - 44, 15, 10, '', 'center')
   }
 
   drawRoomInfo() {
     if (!this.roomId && !this.inputRoomId) return
     const ctx = this.ctx
-    ctx.fillStyle = '#222222'
+    const text = this.roomId ? `${T.roomIdLabel}${this.roomId}` : `${T.joiningLabel}${this.inputRoomId}`
+    const w = Math.min(this.width - 64, 270)
+    const x = (this.width - w) / 2
+    const y = this.y(196)
+    this.roundRect(ctx, x, y, w, 42, UITheme.radius.md)
+    ctx.fillStyle = UITheme.colors.primaryLight
+    ctx.fill()
+    ctx.strokeStyle = BRAND_COLOR
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = UITheme.colors.text
     ctx.font = 'bold 18px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(this.roomId ? `${T.roomIdLabel}${this.roomId}` : `${T.joiningLabel}${this.inputRoomId}`, this.width / 2, this.y(215))
+    this.drawFittedText(ctx, text, this.width / 2, y + 21, w - 22, 18, 11, 'bold', 'center')
   }
 
   drawBackButton() {
     const ctx = this.ctx
     const b = this.backButton
     ctx.save()
-    this.roundRect(ctx, b.x, b.y, b.width, b.height, 8)
-    ctx.fillStyle = '#FFFFFF'
+    this.roundRect(ctx, b.x, b.y, b.width, b.height, UITheme.radius.md)
+    ctx.fillStyle = UITheme.colors.surface
     ctx.fill()
-    ctx.fillStyle = '#444444'
-    ctx.font = 'bold 15px Arial'
+    ctx.strokeStyle = UITheme.colors.line
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = `bold ${UITheme.menu.compactFont}px Arial`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(T.back, b.x + b.width / 2, b.y + b.height / 2)
+    this.drawFittedText(ctx, '\u2039', b.x + b.width / 2, b.y + b.height / 2, b.width - 12, 24, 14, 'bold', 'center')
     ctx.restore()
   }
 
-  createCard({ x, y, width, height, text, accentColor, onClick }) {
+  createCard({ x, y, width, height, text, subText = '', accentColor, onClick, icon = '' }) {
     return {
       hitTest(px, py) {
         return px >= x && px <= x + width && py >= y && py <= y + height
       },
       click() {
+        SoundEffects.play('button')
         onClick()
       },
       draw: ctx => {
         ctx.save()
-        this.roundRect(ctx, x, y, width, height, 6)
-        ctx.fillStyle = '#FFFFFF'
+        this.roundRect(ctx, x, y, width, height, UITheme.radius.md)
+        ctx.fillStyle = accentColor === DANGER_COLOR ? UITheme.colors.dangerLight : this.getCardFill(accentColor)
         ctx.fill()
-        this.roundRect(ctx, x, y, 6, height, 6)
+        ctx.strokeStyle = accentColor
+        ctx.lineWidth = 1.4
+        ctx.stroke()
+        if (icon) {
+          this.drawCardIcon(ctx, icon, x + 38, y + height / 2, Math.min(24, height * 0.32), accentColor)
+        }
         ctx.fillStyle = accentColor
-        ctx.fill()
-        ctx.fillStyle = '#222222'
-        ctx.font = 'bold 17px Arial'
-        ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        ctx.fillText(text, x + width / 2, y + height / 2)
+        this.drawFittedText(ctx, text, subText ? x + 74 : x + width / 2, y + height / 2 - (subText ? 8 : 0), subText ? width - 92 : width - 28, UITheme.menu.itemFont, 12, 'bold', subText ? 'left' : 'center')
+        if (subText) {
+          ctx.fillStyle = UITheme.colors.muted
+          this.drawFittedText(ctx, subText, x + 74, y + height / 2 + 15, width - 92, UITheme.menu.subFont, 9, '', 'left')
+        }
         ctx.restore()
       }
     }
+  }
+
+  getVerticalListStartY(count, itemH, minGap, preferredStartY) {
+    const bottomLimit = this.height - this.safeLayout.insets.bottom - 42
+    const needed = count * itemH + (count - 1) * minGap
+    const maxStartY = bottomLimit - needed
+    return Math.max(this.y(146), Math.min(preferredStartY, maxStartY))
+  }
+
+  getMenuCardWidth() {
+    return this.width - UITheme.menu.pageX * 2
+  }
+
+  getVerticalListGap(startY, count, itemH, preferredGap, minGap) {
+    if (count <= 1) return 0
+    const bottomLimit = this.height - this.safeLayout.insets.bottom - 42
+    const available = bottomLimit - startY - count * itemH
+    return Math.max(minGap, Math.min(preferredGap, available / (count - 1)))
+  }
+
+  drawFittedText(ctx, text, x, y, maxWidth, fontSize, minFontSize = 10, weight = 'bold', align = 'center') {
+    const safeText = `${text}`
+    const fontWeight = weight ? `${weight} ` : ''
+    let size = fontSize
+
+    while (size > minFontSize) {
+      ctx.font = `${fontWeight}${size}px Arial`
+      if (ctx.measureText(safeText).width <= maxWidth) break
+      size -= 1
+    }
+
+    ctx.textAlign = align
+    ctx.fillText(safeText, x, y)
+  }
+
+  drawBackground() {
+    const ctx = this.ctx
+    ctx.fillStyle = UITheme.colors.background
+    ctx.fillRect(0, 0, this.width, this.height)
+    ctx.save()
+    ctx.strokeStyle = '#D9F0FF'
+    for (let x = 22; x < this.width; x += 34) {
+      for (let y = this.y(66); y < this.height; y += 34) {
+        ctx.globalAlpha = 0.24
+        ctx.beginPath()
+        ctx.arc(x, y, 1.2, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+  }
+
+  getCardFill(accentColor) {
+    if (accentColor === UITheme.colors.secondary) return UITheme.colors.secondaryLight
+    if (accentColor === UITheme.colors.warning) return UITheme.colors.warningLight
+    if (accentColor === UITheme.colors.danger) return UITheme.colors.dangerLight
+    return UITheme.colors.surface
+  }
+
+  drawCardIcon(ctx, icon, x, y, size, color) {
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = Math.max(2, size / 8)
+    ctx.lineCap = 'round'
+    if (icon === 'create' || icon === 'join') {
+      ctx.beginPath()
+      ctx.arc(x - size * 0.45, y - size * 0.35, size * 0.36, 0, Math.PI * 2)
+      ctx.arc(x + size * 0.45, y - size * 0.35, size * 0.36, 0, Math.PI * 2)
+      ctx.fill()
+      this.roundRect(ctx, x - size * 1.1, y + size * 0.12, size * 2.2, size * 0.78, size * 0.22)
+      ctx.fill()
+      ctx.fillStyle = '#FFFFFF'
+      ctx.beginPath()
+      ctx.arc(x + size * 0.95, y + size * 0.52, size * 0.45, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = color
+      ctx.beginPath()
+      ctx.moveTo(x + size * 0.95, y + size * 0.27)
+      ctx.lineTo(x + size * 0.95, y + size * 0.77)
+      ctx.moveTo(x + size * 0.7, y + size * 0.52)
+      ctx.lineTo(x + size * 1.2, y + size * 0.52)
+      ctx.stroke()
+    }
+    ctx.restore()
   }
 
   roundRect(ctx, x, y, w, h, r) {
