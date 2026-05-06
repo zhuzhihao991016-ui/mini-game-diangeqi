@@ -186,7 +186,7 @@ export default class OnlineMatchScene extends BaseScene {
     ctx.font = `bold ${UITheme.menu.compactFont}px Arial`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('\u2039', b.x + b.width / 2, b.y + b.height / 2)
+    ctx.fillText('‹', b.x + b.width / 2, b.y + b.height / 2)
     ctx.restore()
   }
 

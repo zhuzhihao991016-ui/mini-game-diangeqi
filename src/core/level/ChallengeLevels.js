@@ -129,6 +129,33 @@ function buildSquareLayout(size, missingSet, prefix) {
   return normalizeToOrigin(layout)
 }
 
+function buildSquareHoleMarkers(missingSet, normalizedLayout) {
+  if (!missingSet || missingSet.size === 0 || !Array.isArray(normalizedLayout) || normalizedLayout.length === 0) {
+    return []
+  }
+
+  const sample = normalizedLayout[0]
+  const offsetX = sample.gridX - sample.points[0][0]
+  const offsetY = sample.gridY - sample.points[0][1]
+
+  return Array.from(missingSet).map((cellKey, index) => {
+    const { x, y } = parseKey(cellKey)
+
+    return {
+      id: `hole_${index}_${x}_${y}`,
+      kind: 'challenge-hole',
+      gridX: x,
+      gridY: y,
+      points: [
+        [x - offsetX, y - offsetY],
+        [x + 1 - offsetX, y - offsetY],
+        [x + 1 - offsetX, y + 1 - offsetY],
+        [x - offsetX, y + 1 - offsetY]
+      ]
+    }
+  })
+}
+
 function buildHexLayout(radius, removedSet, prefix) {
   const layout = []
   let index = 0
@@ -411,7 +438,8 @@ function createSquareLevel(segment, levelIndex, maxWidth, maxHeight, minCellSize
   const special = {
     boardType: 'square',
     size: segment.size,
-    missingCells: Array.from(holes).map(parseKey)
+    missingCells: Array.from(holes).map(parseKey),
+    holeMarkers: buildSquareHoleMarkers(holes, layout)
   }
 
   const layoutMap = new Map(layout.map(cell => [key(cell.gridX, cell.gridY), cell]))

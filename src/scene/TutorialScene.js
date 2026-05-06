@@ -10,11 +10,8 @@ import GuideRenderer from '../render/GuideRenderer'
 import HitTest from '../input/HitTest'
 import { getSceneSafeLayout } from '../utils/SafeArea'
 import UITheme from '../ui/theme'
-
-const PLAYER_COLORS = {
-  p1: UITheme.colors.p1,
-  p2: UITheme.colors.p2
-}
+import { getActiveAppearanceTheme } from '../ui/AppearanceThemes'
+import { getImageAsset, preloadImageAssets } from '../assets/ImageAssets'
 
 const FINAL_TUTORIAL_STEP = 6
 
@@ -51,10 +48,11 @@ export default class TutorialScene extends BaseScene {
     this.afterTakeEdge = null
     this.afterNext = null
     this.canNext = false
-    this.nextLabel = '\u7ee7\u7eed'
+    this.nextLabel = '继续'
     this.feedbackText = ''
     this.feedbackTimer = 0
     this.timers = []
+    preloadImageAssets()
     this.resetBoard()
   }
 
@@ -89,8 +87,7 @@ export default class TutorialScene extends BaseScene {
   render() {
     this.renderer.clear()
 
-    this.ctx.fillStyle = UITheme.colors.background
-    this.ctx.fillRect(0, 0, this.width, this.height)
+    this.drawBackground()
 
     this.boardRenderer.draw({
       board: this.board,
@@ -117,33 +114,29 @@ export default class TutorialScene extends BaseScene {
 
   drawStepText() {
     const ctx = this.ctx
+    const colors = this.getActiveColors()
 
     const x = 20
     const y = this.safeLayout.top + 50
     const w = this.width - 40
     const h = 122
-    this.roundRect(ctx, x, y, w, h, UITheme.radius.md)
-    ctx.fillStyle = UITheme.colors.surface
-    ctx.fill()
-    ctx.strokeStyle = UITheme.colors.line
-    ctx.lineWidth = 1
-    ctx.stroke()
+    this.drawThemePanelShell(ctx, x, y, w, h, colors.primary)
 
     ctx.textBaseline = 'middle'
-    ctx.fillStyle = UITheme.colors.text
+    ctx.fillStyle = colors.text
     this.drawFittedText(ctx, this.title, this.width / 2, y + 28, w - 32, 18, 13, 'bold', 'center')
 
-    ctx.fillStyle = UITheme.colors.muted
+    ctx.fillStyle = colors.muted
     const lines = this.wrapText(ctx, this.body, w - 36, 14, '')
     lines.slice(0, 2).forEach((line, index) => {
       this.drawFittedText(ctx, line, this.width / 2, y + 56 + index * 20, w - 36, 14, 11, '', 'center')
     })
 
     if (this.canNext) {
-      ctx.fillStyle = UITheme.colors.primary
+      ctx.fillStyle = colors.primary
       this.drawFittedText(ctx, this.nextLabel, this.width / 2, y + 104, w - 36, 15, 11, 'bold', 'center')
     } else if (this.hintText) {
-      ctx.fillStyle = UITheme.colors.primary
+      ctx.fillStyle = colors.primary
       this.drawFittedText(ctx, this.hintText, this.width / 2, y + 104, w - 36, 15, 11, 'bold', 'center')
     }
   }
@@ -164,31 +157,33 @@ export default class TutorialScene extends BaseScene {
     const ctx = this.ctx
     const h = 58
     const isCurrent = state.currentPlayerId === playerId && state.status === 'playing'
-    const color = PLAYER_COLORS[playerId]
-    const name = playerId === 'p1' ? '\u4f60' : 'AI'
+    const colors = this.getActiveColors()
+    const color = playerId === 'p1' ? colors.p1 : colors.p2
+    const name = playerId === 'p1' ? '你' : 'AI'
     const score = state.scores[playerId] || 0
 
     ctx.save()
-    this.roundRect(ctx, x, y, w, h, UITheme.radius.md)
-    ctx.fillStyle = UITheme.colors.surface
-    ctx.fill()
-    ctx.strokeStyle = isCurrent ? color : UITheme.colors.line
-    ctx.lineWidth = isCurrent ? 2 : 1
-    ctx.stroke()
+    this.drawThemeButtonShell(ctx, { x, y, width: w, height: h, color, solid: false, compact: true })
+    if (isCurrent) {
+      this.roundRect(ctx, x + 3, y + 3, w - 6, h - 6, UITheme.radius.md)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
 
     ctx.fillStyle = color
     ctx.beginPath()
     ctx.arc(x + 18, y + 20, 7, 0, Math.PI * 2)
     ctx.fill()
 
-    ctx.fillStyle = UITheme.colors.text
+    ctx.fillStyle = colors.text
     this.drawFittedText(ctx, name, x + 32, y + 21, w - 44, 14, 10, 'bold', 'left')
-    ctx.fillStyle = UITheme.colors.muted
+    ctx.fillStyle = colors.muted
     this.drawFittedText(ctx, `${score}/${total}`, x + w / 2, y + 43, w - 18, 13, 10, '', 'center')
 
     if (isCurrent) {
       ctx.fillStyle = color
-      this.drawFittedText(ctx, '\u5f53\u524d\u56de\u5408', x + w - 10, y + 20, w - 52, 11, 8, '', 'right')
+      this.drawFittedText(ctx, '当前回合', x + w - 10, y + 20, w - 52, 11, 8, '', 'right')
     }
 
     ctx.restore()
@@ -199,19 +194,16 @@ export default class TutorialScene extends BaseScene {
     const prev = this.getPrevButton()
     const skip = this.getSkipButton()
 
-    this.drawSmallButton(ctx, prev, '\u4e0a\u4e00\u6b65', this.step > 0)
-    this.drawSmallButton(ctx, skip, '\u8df3\u8fc7', true)
+    this.drawSmallButton(ctx, prev, '上一步', this.step > 0)
+    this.drawSmallButton(ctx, skip, '跳过', true)
   }
 
   drawSmallButton(ctx, rect, text, enabled) {
+    const colors = this.getActiveColors()
+    const color = enabled ? colors.primary : colors.disabled
     ctx.save()
-    this.roundRect(ctx, rect.x, rect.y, rect.width, rect.height, UITheme.radius.md)
-    ctx.fillStyle = enabled ? UITheme.colors.surface : UITheme.colors.disabled
-    ctx.fill()
-    ctx.strokeStyle = enabled ? UITheme.colors.line : UITheme.colors.disabled
-    ctx.lineWidth = 1
-    ctx.stroke()
-    ctx.fillStyle = enabled ? UITheme.colors.text : UITheme.colors.muted
+    this.drawThemeButtonShell(ctx, { x: rect.x, y: rect.y, width: rect.width, height: rect.height, color, solid: false, compact: true })
+    ctx.fillStyle = enabled ? colors.text : colors.muted
     this.drawFittedText(ctx, text, rect.x + rect.width / 2, rect.y + rect.height / 2, rect.width - 12, 13, 9, 'bold', 'center')
     ctx.restore()
   }
@@ -219,34 +211,268 @@ export default class TutorialScene extends BaseScene {
   drawEndMenuButton() {
     const ctx = this.ctx
     const rect = this.getEndMenuButton()
+    const colors = this.getActiveColors()
 
     ctx.save()
-    this.roundRect(ctx, rect.x, rect.y, rect.width, rect.height, UITheme.radius.md)
-    ctx.fillStyle = UITheme.colors.surface
-    ctx.fill()
-    ctx.strokeStyle = UITheme.colors.primary
-    ctx.lineWidth = 1.4
-    ctx.stroke()
-    ctx.fillStyle = UITheme.colors.primary
-    this.drawFittedText(ctx, '\u8fd4\u56de\u83dc\u5355', rect.x + rect.width / 2, rect.y + rect.height / 2, rect.width - 20, 15, 11, 'bold', 'center')
+    this.drawThemeButtonShell(ctx, { x: rect.x, y: rect.y, width: rect.width, height: rect.height, color: colors.primary, solid: false })
+    ctx.fillStyle = colors.primary
+    this.drawFittedText(ctx, '返回菜单', rect.x + rect.width / 2, rect.y + rect.height / 2, rect.width - 20, 15, 11, 'bold', 'center')
     ctx.restore()
   }
 
   drawFeedback() {
     const ctx = this.ctx
-    const text = this.feedbackText || '\u8bf7\u70b9\u51fb\u9ad8\u4eae\u7684\u8fb9'
+    const text = this.feedbackText || '请点击高亮的边'
     const w = Math.min(this.width - 56, 250)
     const h = 38
     const x = (this.width - w) / 2
     const y = this.layout.originY - 52
+    const colors = this.getActiveColors()
 
     ctx.save()
     this.roundRect(ctx, x, y, w, h, UITheme.radius.md)
-    ctx.fillStyle = 'rgba(24, 50, 74, 0.88)'
+    ctx.fillStyle = this.withAlpha(colors.text, 0.88)
     ctx.fill()
     ctx.fillStyle = '#FFFFFF'
     this.drawFittedText(ctx, text, this.width / 2, y + h / 2, w - 20, 13, 10, 'bold', 'center')
     ctx.restore()
+  }
+
+  drawBackground() {
+    const ctx = this.ctx
+    const theme = getActiveAppearanceTheme()
+    const colors = theme.colors
+    const image = getImageAsset((theme.background && theme.background.imageAsset) || 'menuBackground')
+
+    if (image && !image.failed && image.loaded) {
+      const imageRatio = image.width / image.height
+      const canvasRatio = this.width / this.height
+      let drawW = this.width
+      let drawH = this.height
+      let drawX = 0
+      let drawY = 0
+
+      if (imageRatio > canvasRatio) {
+        drawH = this.height
+        drawW = drawH * imageRatio
+        drawX = (this.width - drawW) / 2
+      } else {
+        drawW = this.width
+        drawH = drawW / imageRatio
+        drawY = (this.height - drawH) / 2
+      }
+
+      ctx.drawImage(image, drawX, drawY, drawW, drawH)
+      ctx.fillStyle = theme.background.imageOverlay || 'rgba(255,255,255,0.08)'
+      ctx.fillRect(0, 0, this.width, this.height)
+      return
+    }
+
+    ctx.fillStyle = colors.background
+    ctx.fillRect(0, 0, this.width, this.height)
+  }
+
+  drawThemePanelShell(ctx, x, y, width, height, accentColor) {
+    const colors = this.getActiveColors()
+    ctx.save()
+    this.drawThemeButtonShell(ctx, { x, y, width, height, color: accentColor, solid: false })
+    this.roundRect(ctx, x + 7, y + 7, width - 14, height - 14, UITheme.radius.md)
+    ctx.fillStyle = this.withAlpha(colors.surface, 0.92)
+    ctx.fill()
+    ctx.strokeStyle = this.withAlpha(accentColor, 0.22)
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  drawThemeButtonShell(ctx, { x, y, width, height, color, solid = false, compact = false }) {
+    const theme = getActiveAppearanceTheme()
+    const style = theme.buttonStyle || 'minimal'
+    const colors = theme.colors
+    const radius = style === 'mechanical' || style === 'black-gold'
+      ? Math.min(5, UITheme.radius.md)
+      : style === 'cartoon' || style === 'panda'
+        ? Math.min(14, UITheme.radius.lg)
+        : UITheme.radius.md
+
+    if (style === 'mechanical') {
+      this.cutCornerRect(ctx, x, y, width, height, Math.min(10, height * 0.18))
+      const gradient = ctx.createLinearGradient(x, y, x, y + height)
+      gradient.addColorStop(0, solid ? this.lighten(color, 0.1) : colors.surfaceTint)
+      gradient.addColorStop(0.52, solid ? color : colors.surface)
+      gradient.addColorStop(1, solid ? this.darken(color, 0.24) : colors.surfaceTint)
+      ctx.fillStyle = gradient
+      ctx.fill()
+      ctx.strokeStyle = solid ? this.lighten(color, 0.25) : color
+      ctx.lineWidth = 1.8
+      ctx.stroke()
+      ctx.fillStyle = solid ? this.withAlpha('#FFFFFF', 0.42) : color
+      ;[[x + 12, y + 12], [x + width - 12, y + 12], [x + 12, y + height - 12], [x + width - 12, y + height - 12]].forEach(([px, py]) => {
+        ctx.beginPath()
+        ctx.arc(px, py, 2, 0, Math.PI * 2)
+        ctx.fill()
+      })
+      return
+    }
+
+    this.roundRect(ctx, x, y, width, height, radius)
+    if (style === 'steampunk') {
+      const gradient = ctx.createLinearGradient(x, y, x, y + height)
+      gradient.addColorStop(0, solid ? this.lighten(color, 0.2) : colors.surfaceTint)
+      gradient.addColorStop(0.48, solid ? color : colors.surface)
+      gradient.addColorStop(1, solid ? this.darken(color, 0.28) : colors.primaryLight)
+      ctx.fillStyle = gradient
+      ctx.fill()
+      ctx.strokeStyle = colors.warning
+      ctx.lineWidth = 2
+      ctx.stroke()
+      return
+    }
+
+    if (style === 'black-gold') {
+      const gradient = ctx.createLinearGradient(x, y, x, y + height)
+      gradient.addColorStop(0, solid ? this.lighten(color, 0.12) : '#211B10')
+      gradient.addColorStop(0.45, solid ? color : '#15120B')
+      gradient.addColorStop(1, solid ? this.darken(color, 0.42) : '#080808')
+      ctx.fillStyle = gradient
+      ctx.fill()
+      ctx.strokeStyle = colors.warning
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.strokeStyle = this.withAlpha('#FFF6D8', 0.26)
+      ctx.lineWidth = 1
+      this.roundRect(ctx, x + 4, y + 4, width - 8, height - 8, Math.max(2, radius - 1))
+      ctx.stroke()
+      return
+    }
+
+    if (style === 'cartoon') {
+      this.roundRect(ctx, x, y + 3, width, height, radius)
+      ctx.fillStyle = this.darken(color, solid ? 0.32 : 0.18)
+      ctx.fill()
+      this.roundRect(ctx, x, y, width, height - 3, radius)
+      ctx.fillStyle = solid ? color : this.getCardFill(color)
+      ctx.fill()
+      ctx.strokeStyle = colors.text
+      ctx.lineWidth = 2.4
+      ctx.stroke()
+      if (!compact) {
+        ctx.fillStyle = this.withAlpha('#FFFFFF', solid ? 0.35 : 0.6)
+        this.roundRect(ctx, x + 12, y + 8, width - 24, Math.max(5, height * 0.14), 5)
+        ctx.fill()
+      }
+      return
+    }
+
+    if (style === 'guofeng') {
+      ctx.fillStyle = solid ? color : colors.surface
+      ctx.fill()
+      ctx.strokeStyle = solid ? colors.warning : color
+      ctx.lineWidth = solid ? 1.8 : 1.4
+      ctx.stroke()
+      ctx.strokeStyle = this.withAlpha(solid ? '#FFFDF6' : color, 0.45)
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(x + 10, y + 8)
+      ctx.quadraticCurveTo(x + width * 0.5, y + 2, x + width - 10, y + 8)
+      ctx.stroke()
+      return
+    }
+
+    if (style === 'handdrawn') {
+      const paper = solid ? this.lighten(color, 0.08) : colors.surface
+      const ink = solid ? this.darken(color, 0.34) : color
+      this.drawSketchBlob(ctx, x + 3, y + 4, width - 3, height - 2, radius, [[0, 1], [1, 0], [-1, 1], [0, -1]])
+      ctx.fillStyle = this.withAlpha(colors.text, 0.14)
+      ctx.fill()
+      this.drawSketchBlob(ctx, x, y, width - 2, height - 2, radius, [[0, 0], [2, -1], [-1, 1], [1, 2]])
+      ctx.fillStyle = paper
+      ctx.fill()
+      ctx.strokeStyle = ink
+      ctx.lineWidth = solid ? 2.8 : 2.2
+      this.drawSketchBlob(ctx, x, y, width - 2, height - 2, radius, [[0, 0], [2, -1], [-1, 1], [1, 2]])
+      ctx.stroke()
+      ctx.strokeStyle = this.withAlpha(colors.text, 0.26)
+      ctx.lineWidth = 1.1
+      this.drawSketchBlob(ctx, x + 2, y + 2, width - 5, height - 5, Math.max(3, radius - 3), [[1, -1], [-1, 0], [0, 1], [2, 0]])
+      ctx.stroke()
+      ctx.strokeStyle = this.withAlpha(solid ? '#FFFFFF' : colors.warning, solid ? 0.48 : 0.56)
+      ctx.lineWidth = Math.max(2, height * 0.08)
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(x + width * 0.18, y + height - 10)
+      ctx.quadraticCurveTo(x + width * 0.48, y + height - 15, x + width * 0.82, y + height - 11)
+      ctx.stroke()
+      return
+    }
+
+    if (style === 'panda') {
+      this.roundRect(ctx, x, y + 3, width, height, radius)
+      ctx.fillStyle = this.withAlpha(colors.dot, solid ? 0.22 : 0.12)
+      ctx.fill()
+      this.roundRect(ctx, x, y, width, height - 3, radius)
+      ctx.fillStyle = solid ? color : colors.surface
+      ctx.fill()
+      ctx.strokeStyle = colors.dot
+      ctx.lineWidth = 2.2
+      ctx.stroke()
+      ctx.strokeStyle = solid ? this.withAlpha('#FFFFFF', 0.55) : colors.secondary
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(x + 14, y + height - 10)
+      ctx.quadraticCurveTo(x + width * 0.5, y + height - 18, x + width - 14, y + height - 10)
+      ctx.stroke()
+      return
+    }
+
+    ctx.fillStyle = solid ? color : this.getCardFill(color)
+    ctx.fill()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.4
+    ctx.stroke()
+  }
+
+  getCardFill(accentColor) {
+    const colors = this.getActiveColors()
+    if (accentColor === colors.secondary) return colors.secondaryLight
+    if (accentColor === colors.warning) return colors.warningLight
+    if (accentColor === colors.danger) return colors.dangerLight
+    if (accentColor === colors.purple) return colors.purpleLight
+    return colors.surface
+  }
+
+  getActiveColors() {
+    return getActiveAppearanceTheme().colors
+  }
+
+  darken(hex, amount) {
+    const raw = hex.replace('#', '')
+    const num = parseInt(raw, 16)
+    const r = Math.max(0, Math.floor(((num >> 16) & 255) * (1 - amount)))
+    const g = Math.max(0, Math.floor(((num >> 8) & 255) * (1 - amount)))
+    const b = Math.max(0, Math.floor((num & 255) * (1 - amount)))
+    return `rgb(${r}, ${g}, ${b})`
+  }
+
+  lighten(hex, amount) {
+    const raw = hex.replace('#', '')
+    const num = parseInt(raw, 16)
+    const r = Math.min(255, Math.floor(((num >> 16) & 255) + (255 - ((num >> 16) & 255)) * amount))
+    const g = Math.min(255, Math.floor(((num >> 8) & 255) + (255 - ((num >> 8) & 255)) * amount))
+    const b = Math.min(255, Math.floor((num & 255) + (255 - (num & 255)) * amount))
+    return `rgb(${r}, ${g}, ${b})`
+  }
+
+  withAlpha(color, alpha) {
+    if (typeof color !== 'string') return `rgba(0,0,0,${alpha})`
+    if (color.startsWith('rgba')) return color
+    if (color.startsWith('rgb(')) return color.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`)
+    if (!color.startsWith('#')) return color
+
+    const raw = color.slice(1)
+    if (raw.length !== 6) return color
+    const num = parseInt(raw, 16)
+    return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`
   }
 
   roundRect(ctx, x, y, w, h, r) {
@@ -261,6 +487,35 @@ export default class TutorialScene extends BaseScene {
     ctx.arcTo(x, y + h, x, y + h - r, r)
     ctx.lineTo(x, y + r)
     ctx.arcTo(x, y, x + r, y, r)
+    ctx.closePath()
+  }
+
+  drawSketchBlob(ctx, x, y, width, height, radius, jitter) {
+    const r = Math.min(radius, width / 2, height / 2)
+    const j = jitter || [[0, 0], [0, 0], [0, 0], [0, 0]]
+    ctx.beginPath()
+    ctx.moveTo(x + r + j[0][0], y + j[0][1])
+    ctx.lineTo(x + width - r + j[1][0], y + j[1][1])
+    ctx.quadraticCurveTo(x + width + j[1][0], y + j[1][1], x + width + j[1][0], y + r + j[1][1])
+    ctx.lineTo(x + width + j[2][0], y + height - r + j[2][1])
+    ctx.quadraticCurveTo(x + width + j[2][0], y + height + j[2][1], x + width - r + j[2][0], y + height + j[2][1])
+    ctx.lineTo(x + r + j[3][0], y + height + j[3][1])
+    ctx.quadraticCurveTo(x + j[3][0], y + height + j[3][1], x + j[3][0], y + height - r + j[3][1])
+    ctx.lineTo(x + j[0][0], y + r + j[0][1])
+    ctx.quadraticCurveTo(x + j[0][0], y + j[0][1], x + r + j[0][0], y + j[0][1])
+    ctx.closePath()
+  }
+
+  cutCornerRect(ctx, x, y, width, height, cut) {
+    ctx.beginPath()
+    ctx.moveTo(x + cut, y)
+    ctx.lineTo(x + width - cut, y)
+    ctx.lineTo(x + width, y + cut)
+    ctx.lineTo(x + width, y + height - cut)
+    ctx.lineTo(x + width - cut, y + height)
+    ctx.lineTo(x + cut, y + height)
+    ctx.lineTo(x, y + height - cut)
+    ctx.lineTo(x, y + cut)
     ctx.closePath()
   }
 
@@ -315,7 +570,7 @@ export default class TutorialScene extends BaseScene {
 
     this.step = step
     this.canNext = false
-    this.nextLabel = '\u70b9\u51fb\u5c4f\u5e55\u7ee7\u7eed'
+    this.nextLabel = '点击屏幕继续'
     this.hintText = ''
     this.feedbackTimer = 0
     this.phase = 'waitNext'
@@ -359,8 +614,8 @@ export default class TutorialScene extends BaseScene {
   stepShowBoard() {
     this.resetBoard()
 
-    this.title = '\u8ba4\u8bc6\u68cb\u76d8'
-    this.body = '\u8fd9\u662f 3x3 \u65b9\u683c\u68cb\u76d8\u3002\u6bcf\u4e2a\u65b9\u683c\u90fd\u7531 4 \u6761\u8fb9\u56f4\u6210\u3002'
+    this.title = '认识棋盘'
+    this.body = '这是 3x3 方格棋盘。每个方格都由 4 条边围成。'
 
     const cell = this.board.getCell('c_0_0')
     this.guide.setHighlightCell(cell)
@@ -371,16 +626,16 @@ export default class TutorialScene extends BaseScene {
   stepTakeTurns() {
     this.resetBoard()
 
-    this.title = '\u8f6e\u6d41\u5360\u8fb9'
-    this.body = '\u8f6e\u5230\u4f60\u65f6\uff0c\u70b9\u51fb\u4e00\u6761\u672a\u5360\u9886\u7684\u8fb9\u3002\u5148\u8bd5\u8bd5\u9ad8\u4eae\u7684\u8fd9\u6761\u8fb9\u3002'
-    this.hintText = '\u70b9\u51fb\u53d1\u5149\u7684\u8fb9'
+    this.title = '轮流占边'
+    this.body = '轮到你时，点击一条未占领的边。先试试高亮的这条边。'
+    this.hintText = '点击发光的边'
     this.phase = 'waitEdge'
 
     this.setTargetEdge('h_0_0', 'p1', () => {
-      this.title = '\u8f6e\u5230 AI'
-      this.body = '\u4f60\u5360\u9886\u4e86\u4e00\u6761\u8fb9\u3002\u6ca1\u6709\u95ed\u5408\u65b9\u683c\u65f6\uff0c\u56de\u5408\u4f1a\u4ea4\u7ed9\u5bf9\u624b\u3002'
+      this.title = '轮到 AI'
+      this.body = '你占领了一条边。没有闭合方格时，回合会交给对手。'
       this.hintText = ''
-      this.nextLabel = '\u70b9\u51fb\u8ba9 AI \u5360\u8fb9'
+      this.nextLabel = '点击让 AI 占边'
       this.phase = 'waitNext'
       this.canNext = true
 
@@ -392,9 +647,9 @@ export default class TutorialScene extends BaseScene {
         const pos = this.getEdgeCenter(edge)
         this.guide.setFinger(pos.x, pos.y)
 
-        this.title = 'AI \u5df2\u843d\u5b50'
-        this.body = '\u73b0\u5728\u4f60\u5df2\u7ecf\u4f1a\u5360\u8fb9\u4e86\u3002\u4e0b\u4e00\u6b65\u5b66\u4e60\u600e\u4e48\u5f97\u5206\u3002'
-        this.nextLabel = '\u70b9\u51fb\u5c4f\u5e55\u7ee7\u7eed'
+        this.title = 'AI 已落子'
+        this.body = '现在你已经会占边了。下一步学习怎么得分。'
+        this.nextLabel = '点击屏幕继续'
         this.phase = 'waitNext'
         this.canNext = true
       }
@@ -405,9 +660,9 @@ export default class TutorialScene extends BaseScene {
   stepCloseCellAndExtraMove() {
     this.resetBoard()
 
-    this.title = '\u95ed\u5408\u5f97\u5206'
-    this.body = '\u5f53\u4e00\u4e2a\u65b9\u683c\u7684 4 \u6761\u8fb9\u90fd\u88ab\u5360\u9886\u65f6\uff0c\u6700\u540e\u843d\u8fb9\u7684\u73a9\u5bb6\u5f97 1 \u5206\u3002'
-    this.hintText = '\u8865\u4e0a\u6700\u540e\u4e00\u6761\u8fb9'
+    this.title = '闭合得分'
+    this.body = '当一个方格的 4 条边都被占领时，最后落边的玩家得 1 分。'
+    this.hintText = '补上最后一条边'
 
     this.applyTutorialAction('p1', 'h_0_0')
     this.applyTutorialAction('p2', 'v_1_0')
@@ -417,12 +672,12 @@ export default class TutorialScene extends BaseScene {
     this.phase = 'waitEdge'
 
     this.setTargetEdge('v_0_0', 'p1', () => {
-      this.title = '\u518d\u8d70\u4e00\u6b21'
-      this.body = '\u4f60\u95ed\u5408\u4e86\u4e00\u4e2a\u65b9\u683c\u5e76\u5f97\u5206\u3002\u95ed\u5408\u65b9\u683c\u540e\uff0c\u5f53\u524d\u73a9\u5bb6\u53ef\u4ee5\u8ffd\u52a0\u4e00\u6b21\u884c\u52a8\u3002'
-      this.hintText = '\u518d\u70b9\u4e00\u6761\u8fb9'
+      this.title = '再走一次'
+      this.body = '你闭合了一个方格并得分。闭合方格后，当前玩家可以追加一次行动。'
+      this.hintText = '再点一条边'
       this.setTargetEdge('h_1_0', 'p1', () => {
-        this.title = '\u8ffd\u52a0\u884c\u52a8\u5b8c\u6210'
-        this.body = '\u8fd9\u6b21\u6ca1\u6709\u95ed\u5408\u65b9\u683c\uff0c\u6240\u4ee5\u63a5\u4e0b\u6765\u4f1a\u8f6e\u5230 AI\u3002'
+        this.title = '追加行动完成'
+        this.body = '这次没有闭合方格，所以接下来会轮到 AI。'
         this.hintText = ''
         this.phase = 'waitNext'
         this.canNext = true
@@ -433,9 +688,9 @@ export default class TutorialScene extends BaseScene {
   stepCloseTwoCellsAndExtraMove() {
     this.resetBoard()
 
-    this.title = '\u4e00\u6b21\u591a\u683c'
-    this.body = '\u6709\u65f6\u5019\u4e00\u6761\u8fb9\u4f1a\u540c\u65f6\u8865\u5b8c\u4e24\u4e2a\u65b9\u683c\u3002\u5206\u6570\u4f1a\u5168\u90e8\u8bb0\u7ed9\u4f60\u3002'
-    this.hintText = '\u70b9\u51fb\u4e2d\u95f4\u5171\u7528\u8fb9'
+    this.title = '一次多格'
+    this.body = '有时候一条边会同时补完两个方格。分数会全部记给你。'
+    this.hintText = '点击中间共用边'
 
     this.applyTutorialAction('p1', 'h_0_0')
     this.applyTutorialAction('p2', 'h_1_0')
@@ -447,13 +702,13 @@ export default class TutorialScene extends BaseScene {
     this.phase = 'waitEdge'
 
     this.setTargetEdge('v_1_0', 'p1', () => {
-      this.title = '\u8fde\u5f97\u4e24\u5206'
-      this.body = '\u4f60\u4e00\u6b21\u95ed\u5408\u4e86\u4e24\u4e2a\u65b9\u683c\uff0c\u4f46\u8ffd\u52a0\u884c\u52a8\u4ecd\u7136\u53ea\u6709\u4e00\u6b21\u3002'
-      this.hintText = '\u7528\u8ffd\u52a0\u884c\u52a8\u518d\u70b9\u4e00\u6761\u8fb9'
+      this.title = '连得两分'
+      this.body = '你一次闭合了两个方格，但追加行动仍然只有一次。'
+      this.hintText = '用追加行动再点一条边'
 
       this.setTargetEdge('h_2_0', 'p1', () => {
-        this.title = '\u89c4\u5219\u5df2\u638c\u63e1'
-        this.body = '\u8bb0\u4f4f\uff1a\u8f6e\u6d41\u5360\u8fb9\uff0c\u95ed\u5408\u5f97\u5206\uff0c\u5f97\u5206\u540e\u518d\u8d70\u4e00\u6b21\u3002'
+        this.title = '规则已掌握'
+        this.body = '记住：轮流占边，闭合得分，得分后再走一次。'
         this.hintText = ''
         this.phase = 'waitNext'
         this.canNext = true
@@ -465,9 +720,9 @@ export default class TutorialScene extends BaseScene {
   stepStartFirstGame() {
     this.resetBoard()
 
-    this.title = '\u5f00\u59cb\u7b2c\u4e00\u5c40'
-    this.body = '\u6559\u7a0b\u7ed3\u675f\u540e\u4f1a\u76f4\u63a5\u8fdb\u5165 3x3 \u5165\u95e8\u5c40\u3002\u4f60\u53ef\u4ee5\u8fb9\u73a9\u8fb9\u7ec3\u521a\u624d\u7684\u89c4\u5219\u3002'
-    this.nextLabel = '\u5f00\u59cb 3x3 \u5165\u95e8\u5c40'
+    this.title = '开始第一局'
+    this.body = '教程结束后会直接进入 3x3 入门局。你可以边玩边练刚才的规则。'
+    this.nextLabel = '开始 3x3 入门局'
 
     this.phase = 'waitNext'
     this.canNext = true
@@ -476,9 +731,9 @@ export default class TutorialScene extends BaseScene {
   stepStrategyTakeScore() {
     this.resetBoard()
 
-    this.title = '\u7b56\u7565\uff1a\u5148\u62ff\u73b0\u6210\u5206'
-    this.body = '\u770b\u5230\u5df2\u7ecf\u6709 3 \u6761\u8fb9\u7684\u65b9\u683c\uff0c\u901a\u5e38\u8981\u7acb\u523b\u8865\u4e0a\u6700\u540e\u4e00\u6761\u8fb9\u5f97\u5206\u3002'
-    this.hintText = '\u70b9\u51fb\u6700\u540e\u4e00\u6761\u8fb9\u62ff\u5206'
+    this.title = '策略：先拿现成分'
+    this.body = '看到已经有 3 条边的方格，通常要立刻补上最后一条边得分。'
+    this.hintText = '点击最后一条边拿分'
 
     this.applyTutorialAction('p1', 'h_0_0')
     this.applyTutorialAction('p2', 'v_1_0')
@@ -487,8 +742,8 @@ export default class TutorialScene extends BaseScene {
 
     this.guide.setHighlightCell(this.board.getCell('c_0_0'))
     this.setTargetEdge('v_0_0', 'p1', () => {
-      this.title = '\u4e0d\u8981\u9519\u8fc7\u5f97\u5206'
-      this.body = '\u8fd9\u6837\u4f60\u62ff\u5230 1 \u5206\uff0c\u800c\u4e14\u8fd8\u80fd\u518d\u8d70\u4e00\u6b21\u3002\u5b9e\u6218\u91cc\u8981\u5148\u6293\u4f4f\u8fd9\u79cd\u673a\u4f1a\u3002'
+      this.title = '不要错过得分'
+      this.body = '这样你拿到 1 分，而且还能再走一次。实战里要先抓住这种机会。'
       this.hintText = ''
       this.phase = 'waitNext'
       this.canNext = true
@@ -499,9 +754,9 @@ export default class TutorialScene extends BaseScene {
   stepStrategyAvoidThirdEdge() {
     this.resetBoard()
 
-    this.title = '\u7b56\u7565\uff1a\u522b\u8f7b\u6613\u9001\u5206'
-    this.body = '\u5982\u679c\u4f60\u7ed9\u4e00\u4e2a\u65b9\u683c\u753b\u51fa\u7b2c 3 \u6761\u8fb9\uff0c\u5bf9\u624b\u5f88\u53ef\u80fd\u4e0b\u4e00\u624b\u5c31\u8865\u8fb9\u5f97\u5206\u3002'
-    this.hintText = '\u907f\u5f00\u5371\u9669\u683c\uff0c\u70b9\u51fb\u8fdc\u5904\u5b89\u5168\u8fb9'
+    this.title = '策略：别轻易送分'
+    this.body = '如果你给一个方格画出第 3 条边，对手很可能下一手就补边得分。'
+    this.hintText = '避开危险格，点击远处安全边'
 
     this.applyTutorialAction('p1', 'h_0_0')
     this.applyTutorialAction('p2', 'h_2_0')
@@ -510,8 +765,8 @@ export default class TutorialScene extends BaseScene {
 
     this.guide.setHighlightCell(this.board.getCell('c_0_0'))
     this.setTargetEdge('v_3_2', 'p1', () => {
-      this.title = '\u5148\u627e\u5b89\u5168\u8fb9'
-      this.body = '\u8fd9\u6b21\u4f60\u6ca1\u6709\u628a\u5de6\u4e0a\u89d2\u7684\u65b9\u683c\u9001\u6210 3 \u8fb9\u3002\u521d\u5b66\u65f6\u53ef\u4ee5\u5148\u627e\u4e0d\u4f1a\u9001\u5206\u7684\u8fb9\u3002'
+      this.title = '先找安全边'
+      this.body = '这次你没有把左上角的方格送成 3 边。初学时可以先找不会送分的边。'
       this.hintText = ''
       this.phase = 'waitNext'
       this.canNext = true
@@ -538,7 +793,7 @@ export default class TutorialScene extends BaseScene {
   onPlayerTakeEdge(edge) {
     const result = this.applyTutorialAction(this.targetPlayerId || this.engine.getCurrentPlayerId(), edge.id)
     if (!result || !result.success) {
-      this.showWrongTapFeedback('\u73b0\u5728\u8fd8\u4e0d\u80fd\u70b9\u8fd9\u6761\u8fb9')
+      this.showWrongTapFeedback('现在还不能点这条边')
       return
     }
 
@@ -592,7 +847,7 @@ export default class TutorialScene extends BaseScene {
     this.engine = new GameEngine({
       board: this.board,
       players: [
-        { id: 'p1', name: '\u4f60' },
+        { id: 'p1', name: '你' },
         { id: 'p2', name: 'AI' }
       ]
     })
@@ -652,7 +907,7 @@ export default class TutorialScene extends BaseScene {
     }
   }
 
-  showWrongTapFeedback(text = '\u8bf7\u70b9\u51fb\u9ad8\u4eae\u7684\u8fd9\u6761\u8fb9') {
+  showWrongTapFeedback(text = '请点击高亮的这条边') {
     this.feedbackText = text
     this.feedbackTimer = 900
 

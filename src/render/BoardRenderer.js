@@ -1,9 +1,21 @@
 import UITheme from '../ui/theme'
+import { getActiveAppearanceTheme } from '../ui/AppearanceThemes'
 
 export default class BoardRenderer {
   constructor(ctx) {
     this.ctx = ctx
-    this.obstacleColor = UITheme.colors.obstacle
+  }
+
+  getTheme() {
+    return getActiveAppearanceTheme()
+  }
+
+  getColors() {
+    return this.getTheme().colors
+  }
+
+  getBoardStyle() {
+    return this.getTheme().board
   }
 
   draw({ board, originX, originY, cellSize, animationManager, highlightedEdgeId = null }) {
@@ -20,6 +32,7 @@ export default class BoardRenderer {
   }
 
   drawMixedShape(board, originX, originY, cellSize, animationManager, highlightedEdgeId = null) {
+    this.drawMixedShapeHoleMarkers(board, originX, originY, cellSize)
     this.drawMixedShapeSpecialCells(board, originX, originY, cellSize)
     this.drawMixedShapeCells(board, originX, originY, cellSize, animationManager)
     this.drawMixedShapeEdges(board, originX, originY, cellSize, animationManager, highlightedEdgeId)
@@ -42,6 +55,66 @@ export default class BoardRenderer {
     }
   }
 
+  drawMixedShapeHoleMarkers(board, originX, originY, cellSize) {
+    const markers = board && board.challengeMeta && board.challengeMeta.special
+      ? board.challengeMeta.special.holeMarkers
+      : null
+
+    if (!Array.isArray(markers) || markers.length === 0) return
+
+    for (const marker of markers) {
+      if (!Array.isArray(marker.points) || marker.points.length < 3) continue
+
+      const points = marker.points.map(point => ({
+        x: originX + point[0] * cellSize,
+        y: originY + point[1] * cellSize
+      }))
+      const center = this.getPolygonCenter(points)
+
+      this.drawHoleMarkerPolygon(points, center, cellSize)
+    }
+  }
+
+  getPolygonCenter(points) {
+    const total = points.reduce((sum, point) => {
+      sum.x += point.x
+      sum.y += point.y
+      return sum
+    }, { x: 0, y: 0 })
+
+    return {
+      x: total.x / points.length,
+      y: total.y / points.length
+    }
+  }
+
+  drawHoleMarkerPolygon(points, center, cellSize) {
+    const ctx = this.ctx
+    const warning = this.getColors().warning
+    const danger = this.getColors().danger
+
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(points[0].x, points[0].y)
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y)
+    }
+    ctx.closePath()
+    ctx.fillStyle = this.withAlpha(warning, 0.2)
+    ctx.fill()
+    ctx.strokeStyle = this.withAlpha(danger, 0.82)
+    ctx.lineWidth = Math.max(3, cellSize * 0.06)
+    ctx.setLineDash([Math.max(5, cellSize * 0.14), Math.max(4, cellSize * 0.1)])
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle = danger
+    ctx.font = `bold ${Math.max(14, Math.floor(cellSize * 0.34))}px Arial`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('!', center.x, center.y + 1)
+    ctx.restore()
+  }
+
   drawMixedShapeSpecialCells(board, originX, originY, cellSize) {
     for (const cell of board.cells.values()) {
       const center = this.getMixedShapePoint(cell.center, originX, originY, cellSize)
@@ -50,23 +123,23 @@ export default class BoardRenderer {
         : []
 
       if (cell.isFrozen) {
-        this.drawMixedShapeTint(points, UITheme.colors.primaryLight, UITheme.colors.primary)
-        this.drawCellMarker(center.x, center.y, cellSize, 'ICE', UITheme.colors.primary)
+        this.drawMixedShapeTint(points, this.getColors().primaryLight, this.getColors().primary)
+        this.drawCellMarker(center.x, center.y, cellSize, 'ICE', this.getColors().primary)
         continue
       }
 
       if (cell.isObstacle) {
-        this.drawMixedShapeTint(points, 'rgba(170, 179, 189, 0.18)', this.obstacleColor)
+        this.drawMixedShapeTint(points, this.withAlpha(this.getColors().obstacle, 0.18), this.getBoardStyle().obstacle || this.getColors().obstacle)
         this.drawObstacleCellRect(center.x - cellSize * 0.28, center.y - cellSize * 0.28, cellSize * 0.56, cellSize * 0.56)
         continue
       }
 
       if (cell.isBomb) {
-        this.drawCellMarker(center.x, center.y, cellSize, 'B', UITheme.colors.danger)
+        this.drawCellMarker(center.x, center.y, cellSize, 'B', this.getColors().danger)
       }
 
       if (cell.isQuantum) {
-        this.drawCellMarker(center.x, center.y + cellSize * 0.18, cellSize * 0.76, 'Q', UITheme.colors.purple)
+        this.drawCellMarker(center.x, center.y + cellSize * 0.18, cellSize * 0.76, 'Q', this.getColors().purple)
       }
 
       if (cell.isDoubleScore) {
@@ -113,7 +186,7 @@ export default class BoardRenderer {
       })
 
       ctx.save()
-      ctx.globalAlpha = cell.isDoubleScore && cell.doubleScoreActivated ? 0.36 : 0.25
+      ctx.globalAlpha = this.getCellAlpha(cell)
       ctx.fillStyle = this.getPlayerColor(cell.ownerId)
       ctx.beginPath()
       ctx.moveTo(points[0].x, points[0].y)
@@ -167,12 +240,12 @@ export default class BoardRenderer {
       pointSet.add(`${line.x2.toFixed(1)}_${line.y2.toFixed(1)}`)
     }
 
-    ctx.fillStyle = UITheme.colors.dot
+    ctx.fillStyle = this.getBoardStyle().dot || this.getColors().dot
 
     pointSet.forEach(value => {
       const [x, y] = value.split('_').map(Number)
       ctx.beginPath()
-      ctx.arc(x, y, 4, 0, Math.PI * 2)
+      ctx.arc(x, y, Math.max(3, (this.getBoardStyle().dotRadius || 5) - 1), 0, Math.PI * 2)
       ctx.fill()
     })
   }
@@ -200,11 +273,11 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       }
 
       if (cell.isBomb) {
-        this.drawCellMarker(x + cellSize / 2, y + cellSize / 2, cellSize, 'B', UITheme.colors.danger)
+        this.drawCellMarker(x + cellSize / 2, y + cellSize / 2, cellSize, 'B', this.getColors().danger)
       }
 
       if (cell.isQuantum) {
-        this.drawCellMarker(x + cellSize / 2, y + cellSize * 0.72, cellSize * 0.72, 'Q', UITheme.colors.purple)
+        this.drawCellMarker(x + cellSize / 2, y + cellSize * 0.72, cellSize * 0.72, 'Q', this.getColors().purple)
       }
 
       if (cell.isDoubleScore) {
@@ -246,10 +319,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     const radius = Math.min(12, size / 4)
 
     ctx.save()
-    ctx.globalAlpha = 0.25
-    if (cell.isDoubleScore && cell.doubleScoreActivated) {
-      ctx.globalAlpha = 0.36
-    }
+    ctx.globalAlpha = this.getCellAlpha(cell)
     ctx.fillStyle = color
     this.roundRect(ctx, x, y, size, size, radius)
     ctx.fill()
@@ -289,9 +359,10 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
   drawEmptyEdge(line) {
     const ctx = this.ctx
+    const boardStyle = this.getBoardStyle()
 
-    ctx.strokeStyle = UITheme.colors.line
-    ctx.lineWidth = 3
+    ctx.strokeStyle = boardStyle.emptyEdge || this.getColors().line
+    ctx.lineWidth = boardStyle.emptyWidth || 3
     ctx.lineCap = 'round'
 
     ctx.beginPath()
@@ -302,12 +373,13 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
   drawHighlightedEdge(line) {
     const ctx = this.ctx
+    const boardStyle = this.getBoardStyle()
 
     ctx.save()
-    ctx.strokeStyle = UITheme.colors.warning
+    ctx.strokeStyle = boardStyle.highlight || this.getColors().warning
     ctx.lineWidth = 8
     ctx.lineCap = 'round'
-    ctx.shadowColor = 'rgba(255, 196, 61, 0.45)'
+    ctx.shadowColor = this.withAlpha(boardStyle.highlight || this.getColors().warning, 0.45)
     ctx.shadowBlur = 8
 
     ctx.beginPath()
@@ -320,6 +392,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
   drawClaimedEdge(line, playerId, progress) {
     const ctx = this.ctx
+    const boardStyle = this.getBoardStyle()
 
     const midX = (line.x1 + line.x2) / 2
     const midY = (line.y1 + line.y2) / 2
@@ -328,7 +401,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     const halfY = (line.y2 - line.y1) / 2 * progress
 
     ctx.strokeStyle = this.getPlayerColor(playerId)
-    ctx.lineWidth = 6
+    ctx.lineWidth = boardStyle.claimedWidth || 6
     ctx.lineCap = 'round'
 
     ctx.beginPath()
@@ -342,12 +415,12 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
     for (let y = 0; y <= board.rows; y++) {
       for (let x = 0; x <= board.cols; x++) {
-        ctx.fillStyle = UITheme.colors.dot
+        ctx.fillStyle = this.getBoardStyle().dot || this.getColors().dot
         ctx.beginPath()
         ctx.arc(
           originX + x * cellSize,
           originY + y * cellSize,
-          5,
+          this.getBoardStyle().dotRadius || 5,
           0,
           Math.PI * 2
         )
@@ -364,7 +437,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     const ctx = this.ctx
 
     ctx.save()
-    ctx.strokeStyle = this.obstacleColor
+    ctx.strokeStyle = this.getBoardStyle().obstacle || this.getColors().obstacle
     ctx.lineWidth = lineWidth
     ctx.lineCap = 'round'
     ctx.beginPath()
@@ -393,18 +466,26 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
   }
 
   getPlayerColor(playerId) {
-    if (playerId === 'p1') return UITheme.colors.p1
-    if (playerId === 'p2') return UITheme.colors.p2
-    if (playerId === 'p3') return UITheme.colors.secondary
-    if (playerId === 'p4') return UITheme.colors.warning
-    return UITheme.colors.text
+    const colors = this.getColors()
+    if (playerId === 'p1') return colors.p1
+    if (playerId === 'p2') return colors.p2
+    if (playerId === 'p3') return colors.secondary
+    if (playerId === 'p4') return colors.warning
+    return colors.text
+  }
+
+  getCellAlpha(cell) {
+    const baseAlpha = this.getBoardStyle().cellAlpha || 0.25
+    return cell.isDoubleScore && cell.doubleScoreActivated
+      ? Math.min(0.5, baseAlpha + 0.1)
+      : baseAlpha
   }
 
   drawDoubleScoreLabel(cx, cy, size) {
     const ctx = this.ctx
 
     ctx.save()
-    ctx.fillStyle = UITheme.colors.warning
+    ctx.fillStyle = this.getColors().warning
     ctx.font = `bold ${Math.max(22, Math.floor(size * 0.46))}px Arial`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -417,7 +498,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     const pad = Math.max(5, Math.min(width, height) * 0.18)
 
     ctx.save()
-    ctx.strokeStyle = this.obstacleColor
+    ctx.strokeStyle = this.getBoardStyle().obstacle || this.getColors().obstacle
     ctx.lineWidth = Math.max(6, Math.min(width, height) * 0.12)
     ctx.lineCap = 'round'
     ctx.beginPath()
@@ -433,15 +514,15 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     const ctx = this.ctx
 
     ctx.save()
-    ctx.fillStyle = 'rgba(223, 240, 255, 0.72)'
-    ctx.strokeStyle = UITheme.colors.primary
+    ctx.fillStyle = this.withAlpha(this.getColors().primaryLight, 0.72)
+    ctx.strokeStyle = this.getColors().primary
     ctx.lineWidth = Math.max(2, Math.min(width, height) * 0.06)
     this.roundRect(ctx, x + 4, y + 4, width - 8, height - 8, Math.min(8, width / 5))
     ctx.fill()
     ctx.stroke()
     ctx.restore()
 
-    this.drawCellMarker(x + width / 2, y + height / 2, Math.min(width, height), 'ICE', UITheme.colors.primary)
+    this.drawCellMarker(x + width / 2, y + height / 2, Math.min(width, height), 'ICE', this.getColors().primary)
   }
 
   drawCellMarker(cx, cy, size, text, color) {
@@ -541,7 +622,7 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
 
       if (cell.isObstacle) {
         if (cell.isFrozen) {
-          this.drawCellMarker(cx, cy, size, 'ICE', UITheme.colors.primary)
+          this.drawCellMarker(cx, cy, size, 'ICE', this.getColors().primary)
           continue
         }
 
@@ -565,11 +646,11 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       }
 
       if (cell.isBomb) {
-        this.drawCellMarker(cx, cy, size, 'B', UITheme.colors.danger)
+        this.drawCellMarker(cx, cy, size, 'B', this.getColors().danger)
       }
 
       if (cell.isQuantum) {
-        this.drawCellMarker(cx, cy + size * 0.24, size * 0.72, 'Q', UITheme.colors.purple)
+        this.drawCellMarker(cx, cy + size * 0.24, size * 0.72, 'Q', this.getColors().purple)
       }
     }
   }
@@ -592,11 +673,8 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       const corners = this.getHexCorners(cx, cy, size * 0.98 * progress)
   
       ctx.save()
-      ctx.globalAlpha = 0.25
+      ctx.globalAlpha = this.getCellAlpha(cell)
       ctx.fillStyle = this.getPlayerColor(cell.ownerId)
-      if (cell.isDoubleScore && cell.doubleScoreActivated) {
-        ctx.globalAlpha = 0.36
-      }
   
       ctx.beginPath()
       ctx.moveTo(corners[0].x, corners[0].y)
@@ -625,13 +703,13 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
       pointSet.add(key2)
     }
   
-    ctx.fillStyle = UITheme.colors.dot
+    ctx.fillStyle = this.getBoardStyle().dot || this.getColors().dot
   
     pointSet.forEach(key => {
       const [x, y] = key.split('_').map(Number)
   
       ctx.beginPath()
-      ctx.arc(x, y, 4, 0, Math.PI * 2)
+      ctx.arc(x, y, Math.max(3, (this.getBoardStyle().dotRadius || 5) - 1), 0, Math.PI * 2)
       ctx.fill()
     })
   }
@@ -648,5 +726,22 @@ drawHex(board, originX, originY, size, animationManager, highlightedEdgeId = nul
     ctx.lineTo(x, y + radius)
     ctx.quadraticCurveTo(x, y, x + radius, y)
     ctx.closePath()
+  }
+
+  withAlpha(color, alpha) {
+    if (typeof color !== 'string') return `rgba(0, 0, 0, ${alpha})`
+    if (color.startsWith('rgba')) return color
+    if (color.startsWith('rgb(')) {
+      return color.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`)
+    }
+    if (!color.startsWith('#')) return color
+
+    const raw = color.slice(1)
+    if (raw.length !== 6) return color
+    const num = parseInt(raw, 16)
+    const r = (num >> 16) & 255
+    const g = (num >> 8) & 255
+    const b = num & 255
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
   }
 }

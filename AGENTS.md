@@ -57,9 +57,9 @@
 
 ## 当前已知风险
 
-- 多个文件中的中文字符串和注释仍有 mojibake 乱码，不只是显示问题。`game.js`、`BattleScene.js`、`RoomManager.js`、`SimpleAI.js`、`online-server/server.js`、`docs/*.md` 都能看到受影响内容。
-- `online-server/server.js` 至少存在明显的乱码破坏字符串闭合风险，例如部分 `sendError` 文案和挑战排行榜建表 SQL 默认昵称；服务端语法检查可能失败。
-- `src/scene/BattleScene.js` 中有大量乱码注释/日志，但核心文案已有一部分改为 `\u` 转义。修复时不要把乱码继续复制扩散。
+- 本机已升级到 PowerShell 7，中文编码问题已解决；客户端中文文案已恢复为 UTF-8 中文字符，后续不要再把中文改写成 `\uXXXX` 转义。
+- 如果遇到历史 mojibake 乱码，应优先按上下文恢复为真实中文，并保持文件 UTF-8 编码；不要把乱码当作业务文案继续复制扩散。
+- `online-server/server.js` 历史上曾出现过乱码破坏字符串闭合风险，修改服务端中文文案后仍应执行语法检查确认。
 - `src/core/config/GameConfig.js` 和 `src/core/config/BoardConfig.js` 为空文件。
 - `src/core/board/square-board-generator.js` 与 `hex-board-generator.js` 使用 CommonJS 导出，且看起来不是当前主路径；实际棋盘创建走 `BoardFactory.js`。
 - 联网配置在 `game.js` 中硬编码了云环境 `prod-d8go30yrm27b9e5e5`、服务名 `express-al2u` 和路径 `/ws`，修改前需要确认目标环境。
@@ -75,7 +75,7 @@
 - 方格棋盘边 ID 当前形如 `h_${x}_${y}`、`v_${x}_${y}`；六边形边 ID 当前形如 `e_${cellA}_${cellB}`；混合形状边 ID 由布局点坐标生成。联网协议传输的是边 ID，改 ID 规则会影响在线对局兼容性。
 - 在线对局中服务端玩家 ID 会通过座位映射到本地 `p1` / `p2`，相关逻辑在 `RoomManager.toLocalGamePlayerId()`。
 - 好友房服务端现在支持重赛投票、悔棋投票、断线暂停和恢复。修改 `MessageType`、房间状态字段、历史快照或边 ID 解析前，需要同时检查客户端和服务端。
-- UI 文案修复时统一使用 UTF-8，避免再次引入乱码。修复乱码后应重新检查字符串闭合和模板字符串插值。
+- UI 文案统一使用 UTF-8 中文字符，避免再次引入乱码或大段 Unicode 转义。修改文案后应重新检查字符串闭合和模板字符串插值。
 - 排行榜同时有客户端本地缓存和服务端 MySQL/内存 fallback；改排序规则时需要同步 `InfernoLeaderboard.js` 与 `online-server/server.js`。
 - 用户昵称最长按 12 个字符处理，客户端和服务端都有裁剪逻辑。
 
@@ -103,7 +103,7 @@
 
 ## 给后续代理的注意事项
 
-- 不要把乱码当作业务文案继续复制扩散；先确认原意或按上下文恢复中文。
+- 中文文案优先直接写 UTF-8 中文字符；只有控制字符、不可见字符或明确兼容性需求才使用转义。
 - 不要随意删除 `wx.__userManager`、`wx.__leaderboardManager`、`wx.__roomManager`、`wx.__frameSyncManager` 等调试挂载，它们在真机调试中有用。
 - 不要在没有确认服务端协议的情况下修改 `MessageType`、房间状态字段或边 ID 格式。
 - 不要把根目录 `project.private.config.json` 中的本地配置当成通用团队配置。

@@ -1,7 +1,7 @@
 import EventEmitter from '../utils/EventEmitter'
 
 const STORAGE_KEY = 'dots_user_profile'
-const DEFAULT_NICKNAME = '\u73a9\u5bb6'
+const DEFAULT_NICKNAME = '玩家'
 
 function createFallbackId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -94,7 +94,7 @@ export default class UserManager extends EventEmitter {
 
       return this.saveLocalProfile(user)
     } catch (err) {
-      console.warn('\u7528\u6237\u767b\u5f55\u5931\u8d25\uff0c\u4f7f\u7528\u672c\u5730\u4e34\u65f6\u8d44\u6599:', err)
+      console.warn('用户登录失败，使用本地临时资料:', err)
 
       const fallback = {
         openId: this.profile.openId || wx.getStorageSync('debug_openid') || createFallbackId('debug_openid'),
@@ -165,7 +165,7 @@ export default class UserManager extends EventEmitter {
         return this.saveLocalProfile(user)
       }
     } catch (err) {
-      console.warn('\u540c\u6b65\u6635\u79f0\u5931\u8d25\uff0c\u4ec5\u66f4\u65b0\u672c\u5730\u8d44\u6599:', err)
+      console.warn('同步昵称失败，仅更新本地资料:', err)
     }
 
     return this.saveLocalProfile({
@@ -177,9 +177,9 @@ export default class UserManager extends EventEmitter {
   promptNickname() {
     return new Promise(resolve => {
       wx.showModal({
-        title: '\u4fee\u6539\u6635\u79f0',
+        title: '修改昵称',
         editable: true,
-        placeholderText: '\u8bf7\u8f93\u5165\u6635\u79f0\uff0c\u6700\u591a 12 \u4e2a\u5b57',
+        placeholderText: '请输入昵称，最多 12 个字',
         success: res => {
           if (res.confirm && res.content) {
             resolve(sanitizeNickname(res.content))

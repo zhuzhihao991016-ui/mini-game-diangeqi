@@ -7,12 +7,12 @@ const PLAYER_COLORS = {
 }
 
 const PLAYER_NAMES = {
-  p1: '\u73a9\u5bb6\u4e00',
-  p2: '\u73a9\u5bb6\u4e8c'
+  p1: '玩家一',
+  p2: '玩家二'
 }
 
 const FONT_FAMILY = 'Arial, sans-serif'
-const TROPHY_SYMBOL = '\uD83C\uDFC6\uFE0E'
+const TROPHY_SYMBOL = '🏆︎'
 
 export default class GameOverPanel {
   constructor(ctx, canvas, width, height) {
@@ -31,7 +31,7 @@ export default class GameOverPanel {
     const W = this.width
     const H = this.height
     const localPlayerId = options.localPlayerId || null
-    const restartText = options.restartText || '\u518d\u6765\u4e00\u5c40'
+    const restartText = options.restartText || '再来一局'
     this.playerNames = { ...PLAYER_NAMES, ...(options.playerNames || {}) }
 
     ctx.save()
@@ -61,16 +61,16 @@ export default class GameOverPanel {
     ctx.font = `bold 22px ${FONT_FAMILY}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('\u6e38\u620f\u7ed3\u675f', W / 2, panelY + (compact ? 32 : 42))
+    ctx.fillText('游戏结束', W / 2, panelY + (compact ? 32 : 42))
     if (!compact) {
       drawImageAsset(ctx, 'crown', W / 2 - 26, panelY + 55, 52, 52)
     } else {
       drawImageAsset(ctx, 'crown', W / 2 - 18, panelY + 42, 36, 36)
     }
 
-    let resultText = '\u52bf\u5747\u529b\u654c\uff0c\u5e73\u5c40\uff01'
+    let resultText = '势均力敌，平局！'
     if (state.winnerId) {
-      resultText = `${TROPHY_SYMBOL} ${this.getPlayerName(state.winnerId, localPlayerId)} \u83b7\u80dc\uff01`
+      resultText = `${TROPHY_SYMBOL} ${this.getPlayerName(state.winnerId, localPlayerId)} 获胜！`
     }
 
     ctx.font = `bold 25px ${FONT_FAMILY}`
@@ -124,7 +124,7 @@ export default class GameOverPanel {
         ctx.fill()
         ctx.font = `bold 12px ${FONT_FAMILY}`
         ctx.fillStyle = UITheme.colors.surface
-        ctx.fillText('\u6211', tagX + tagW / 2, tagY + tagH / 2 + 1)
+        ctx.fillText('我', tagX + tagW / 2, tagY + tagH / 2 + 1)
       }
 
       ctx.font = `bold ${compact ? 25 : 30}px ${FONT_FAMILY}`
@@ -144,13 +144,13 @@ export default class GameOverPanel {
     this.menuButton = { x: btnX, y: menuBtnY, width: btnW, height: btnH }
 
     this._drawButton({ x: btnX, y: restartBtnY, width: btnW, height: btnH, text: restartText, color: accentColor, textColor: '#FFFFFF' })
-    this._drawButton({ x: btnX, y: menuBtnY, width: btnW, height: btnH, text: '\u8fd4\u56de\u83dc\u5355', color: UITheme.colors.surfaceTint, textColor: UITheme.colors.text, leftColor: accentColor })
+    this._drawButton({ x: btnX, y: menuBtnY, width: btnW, height: btnH, text: '返回菜单', color: UITheme.colors.surfaceTint, textColor: UITheme.colors.text, leftColor: accentColor })
     ctx.restore()
   }
 
   getPlayerName(playerId, localPlayerId) {
     const baseName = this.playerNames[playerId] || PLAYER_NAMES[playerId] || playerId
-    return localPlayerId && localPlayerId === playerId ? `${baseName}\uff08\u6211\uff09` : baseName
+    return localPlayerId && localPlayerId === playerId ? `${baseName}（我）` : baseName
   }
 
   _drawButton({ x, y, width, height, text, color, textColor, leftColor = 'rgba(0,0,0,0.15)' }) {

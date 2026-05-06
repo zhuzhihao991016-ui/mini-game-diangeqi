@@ -3,7 +3,23 @@ const ASSET_PATHS = {
   avatarBlue: 'src/assets/image/avatar-player-blue.png',
   avatarRed: 'src/assets/image/avatar-player-red.png',
   crown: 'src/assets/image/icon-crown.png',
-  menuBackground: 'src/assets/image/menu-background.png'
+  titleThemeMinimal: 'src/assets/image/title-theme-minimal.png',
+  titleThemeMechanical: 'src/assets/image/title-theme-mechanical.png',
+  titleThemeSteampunk: 'src/assets/image/title-theme-steampunk.png',
+  titleThemeBlackGold: 'src/assets/image/title-theme-black-gold.png',
+  titleThemeCartoon: 'src/assets/image/title-theme-playful.png',
+  titleThemeGuofeng: 'src/assets/image/title-theme-guofeng.png',
+  titleThemeHanddrawn: 'src/assets/image/title-theme-handdrawn.png',
+  titleThemePanda: 'src/assets/image/title-theme-panda-alpha.png',
+  menuBackground: 'src/assets/image/menu-background.jpg',
+  themeBgMinimal: 'src/assets/image/theme-bg-minimal.jpg',
+  themeBgMechanical: 'src/assets/image/theme-bg-mechanical.jpg',
+  themeBgSteampunk: 'src/assets/image/theme-bg-steampunk.jpg',
+  themeBgBlackGold: 'src/assets/image/theme-bg-black-gold.jpg',
+  themeBgCartoon: 'src/assets/image/theme-bg-cartoon.jpg',
+  themeBgGuofeng: 'src/assets/image/theme-bg-guofeng.jpg',
+  themeBgHanddrawn: 'src/assets/image/theme-bg-handdrawn.jpg',
+  themeBgPanda: 'src/assets/image/theme-bg-panda.jpg'
 }
 
 const cache = {}

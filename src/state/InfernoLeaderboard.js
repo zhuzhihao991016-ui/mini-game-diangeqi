@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'dots_leaderboards_v2'
-const DEFAULT_NICKNAME = '\u73a9\u5bb6'
+const DEFAULT_NICKNAME = '玩家'
 const MAX_RECORDS = 20
 const DEFAULT_BOARD_KEY = 'inferno-3x3'
 

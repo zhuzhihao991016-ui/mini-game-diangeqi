@@ -11,6 +11,10 @@
         "value": "docs"
       },
       {
+        "type": "folder",
+        "value": ".codex"
+      },
+      {
         "type": "file",
         "value": "online-server.zip"
       },

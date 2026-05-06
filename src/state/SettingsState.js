@@ -3,7 +3,8 @@ const SETTINGS_KEY = 'dots_boxes_settings'
 const DEFAULT_SETTINGS = {
   soundEnabled: true,
   volume: 0.8,
-  vibrationEnabled: true
+  vibrationEnabled: true,
+  appearanceThemeId: 'minimal'
 }
 
 let cachedSettings = null
@@ -50,8 +51,14 @@ function normalizeSettings(settings) {
   return {
     soundEnabled: settings.soundEnabled !== false,
     volume: clampNumber(settings.volume, 0, 1, DEFAULT_SETTINGS.volume),
-    vibrationEnabled: settings.vibrationEnabled !== false
+    vibrationEnabled: settings.vibrationEnabled !== false,
+    appearanceThemeId: normalizeThemeId(settings.appearanceThemeId)
   }
+}
+
+function normalizeThemeId(value) {
+  const text = typeof value === 'string' ? value : DEFAULT_SETTINGS.appearanceThemeId
+  return /^[a-z0-9-]+$/.test(text) ? text : DEFAULT_SETTINGS.appearanceThemeId
 }
 
 function clampNumber(value, min, max, fallback) {

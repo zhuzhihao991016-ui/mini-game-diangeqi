@@ -14,19 +14,69 @@ import { getSceneSafeLayout } from '../utils/SafeArea'
 import { applyChallengeLevelToBoard, createChallengeLevels } from '../core/level/ChallengeLevels'
 import { unlockChallengeLevel } from '../state/ChallengeProgress'
 import UITheme from '../ui/theme'
+import { getActiveAppearanceTheme } from '../ui/AppearanceThemes'
 import { drawImageAsset, getImageAsset, preloadImageAssets } from '../assets/ImageAssets'
 import SoundEffects from '../assets/SoundEffects'
 import { getGameSettings } from '../state/SettingsState'
 
-const PLAYER_COLORS = {
-  p1: UITheme.colors.p1,
-  p2: UITheme.colors.p2
+const DEFAULT_PLAYER_NAMES = {
+  p1: '玩家一',
+  p2: '玩家二'
 }
 
-const DEFAULT_PLAYER_NAMES = {
-  p1: '\u73a9\u5bb6\u4e00',
-  p2: '\u73a9\u5bb6\u4e8c'
+const CHALLENGE_TUTORIALS = {
+  hole: {
+    title: '新机制：镂空格',
+    body: '黄底红虚线的区域是镂空格，这里不能得分。',
+    accent: UITheme.colors.danger
+  },
+  obstacleCell: {
+    title: '新机制：障碍格',
+    body: '障碍格不能被占领，相关边会被封锁。规划路线时要把它当作不可用区域。',
+    accent: UITheme.colors.obstacle
+  },
+  obstacleEdge: {
+    title: '新机制：障碍边',
+    body: '障碍边无法点击占领，它会改变格子的封闭节奏。找到可用边再落子。',
+    accent: UITheme.colors.obstacle
+  },
+  doubleCell: {
+    title: '新机制：双倍得分格',
+    body: '带 X2 的格子在连续收格时可以提供更高分值。尽量把它留到可以追加行动的时机。',
+    accent: UITheme.colors.warning
+  },
+  chainDoubleCell: {
+    title: '进阶机制：连锁双倍得分',
+    body: 'X2 不是单独收下就翻倍，必须一次落子同时闭合多个格子才会激活。制造连锁收格时，优先把 X2 放进同一次收格里。',
+    accent: UITheme.colors.warning
+  },
+  bombCell: {
+    title: '新机制：炸弹格',
+    body: '带 B 的炸弹格被收下后会清除周边格的占领。落子前先判断它会不会连带改变局面。',
+    accent: UITheme.colors.danger
+  },
+  freezeCell: {
+    title: '新机制：冰冻格',
+    body: '带 ICE 的冰冻格初始会像障碍一样被封住，周边格被闭合后才会解冻变成可争夺格。',
+    accent: UITheme.colors.primary
+  },
+  quantumCell: {
+    title: '新机制：量子格',
+    body: '带 Q 的量子格会成对联动。收下其中一个时，信息会复制给它的配对格。',
+    accent: UITheme.colors.purple
+  }
 }
+
+const CHALLENGE_TUTORIAL_ORDER = [
+  'hole',
+  'obstacleCell',
+  'obstacleEdge',
+  'doubleCell',
+  'chainDoubleCell',
+  'bombCell',
+  'freezeCell',
+  'quantumCell'
+]
 
 export default class BattleScene extends BaseScene {
   constructor({ canvas, ctx, inputManager, sceneManager, width, height, rows = 3, cols = 3,  boardType = 'square', mode = 'local_2p', aiDifficulty = 'easy', isFunMode = false, funModeSeed = '', onlineManager = null, userManager = null, leaderboardManager = null, challengeMode = false, challengeLevelIndex = 1, challengeLevels = null }) {
@@ -112,6 +162,9 @@ export default class BattleScene extends BaseScene {
       playerId: null,
       count: 0
     }
+    this.challengeTutorialQueue = []
+    this.activeChallengeTutorial = null
+    this.challengeTutorialButton = null
     this.soundTimers = []
     this.lastGameEndSoundKey = ''
 
@@ -142,6 +195,7 @@ export default class BattleScene extends BaseScene {
         boardType: this.currentChallengeLevel.boardType,
         boardSize: this.currentChallengeLevel.boardSize
       }
+      this.prepareChallengeTutorials()
     } else if (this.boardType === 'hex') {
       board = BoardFactory.createHexBoard(3) // 半径3
     } else {
@@ -283,9 +337,9 @@ export default class BattleScene extends BaseScene {
     
       if (this.roomPaused) {
         if (roomState.pauseReason === 'player_disconnected') {
-          this.roomPauseText = '\u5bf9\u65b9\u6682\u65f6\u79bb\u7ebf\uff0c\u7b49\u5f85\u91cd\u8fde...'
+          this.roomPauseText = '对方暂时离线，等待重连...'
         } else {
-          this.roomPauseText = '\u623f\u95f4\u6682\u65f6\u6682\u505c\uff0c\u7b49\u5f85\u6062\u590d...'
+          this.roomPauseText = '房间暂时暂停，等待恢复...'
         }
       } else {
         this.roomPauseText = ''
@@ -756,6 +810,68 @@ export default class BattleScene extends BaseScene {
     return ''
   }
 
+  prepareChallengeTutorials() {
+    if (!this.challengeMode || !this.currentChallengeLevel) {
+      this.challengeTutorialQueue = []
+      this.activeChallengeTutorial = null
+      return
+    }
+
+    const current = this.getChallengeMechanicSet(this.currentChallengeLevel)
+    const previous = new Set()
+    const levels = Array.isArray(this.challengeLevels) ? this.challengeLevels : []
+    const currentIndex = this.currentChallengeLevel.index || this.challengeLevelIndex
+
+    for (const level of levels) {
+      if (!level || level.index >= currentIndex) continue
+      for (const key of this.getChallengeMechanicSet(level)) {
+        previous.add(key)
+      }
+    }
+
+    this.challengeTutorialQueue = CHALLENGE_TUTORIAL_ORDER
+      .filter(key => current.has(key) && !previous.has(key))
+      .map(key => ({
+        key,
+        ...CHALLENGE_TUTORIALS[key]
+      }))
+
+    this.activeChallengeTutorial = this.challengeTutorialQueue.shift() || null
+    this.challengeTutorialButton = null
+  }
+
+  getChallengeMechanicSet(level) {
+    const result = new Set()
+    const special = level && level.special ? level.special : {}
+
+    if (Array.isArray(special.missingCells) && special.missingCells.length > 0) {
+      result.add('hole')
+    }
+
+    for (const cell of special.cells || []) {
+      if (!cell || !cell.type) continue
+      result.add(cell.type)
+      if (cell.type === 'doubleCell') {
+        result.add('chainDoubleCell')
+      }
+    }
+
+    if (Array.isArray(special.edges) && special.edges.length > 0) {
+      result.add('obstacleEdge')
+    }
+
+    return result
+  }
+
+  hasActiveChallengeTutorial() {
+    return !!this.activeChallengeTutorial
+  }
+
+  advanceChallengeTutorial() {
+    this.activeChallengeTutorial = this.challengeTutorialQueue.shift() || null
+    this.challengeTutorialButton = null
+  }
+
   updateAssistButtonLayout() {
     const buttonGap = 12
     const y = this.height - this.safeLayout.bottom - this.undoButton.height - 14
@@ -796,6 +912,14 @@ export default class BattleScene extends BaseScene {
     this.inputManager.clearTouchStartHandlers()
   
     this.inputManager.onTouchStart((x, y) => {
+      if (this.hasActiveChallengeTutorial()) {
+        if (!this.challengeTutorialButton || this.isButtonHit(this.challengeTutorialButton, x, y)) {
+          this.playButtonSound()
+          this.advanceChallengeTutorial()
+        }
+        return
+      }
+
       if (this.turnCoverVisible) {
         this.hideTurnCover()
         return
@@ -870,7 +994,7 @@ export default class BattleScene extends BaseScene {
           : this.localPlayerId
       
         if (this.engine.getCurrentPlayerId() !== this.localPlayerId) {
-          console.log('\u8fd8\u6ca1\u8f6e\u5230\u6211', {
+          console.log('还没轮到我', {
             current: this.engine.getCurrentPlayerId(),
             local: this.localPlayerId
           })
@@ -922,17 +1046,17 @@ export default class BattleScene extends BaseScene {
     const state = this.engine.getState()
   
     if (!state || state.status !== 'finished') {
-      console.log('\u672c\u5730\u6e38\u620f\u5c1a\u672a\u7ed3\u675f\uff0c\u4e0d\u80fd\u8bf7\u6c42\u518d\u6765\u4e00\u5c40')
+      console.log('本地游戏尚未结束，不能请求再来一局')
       return
     }
   
     if (this.rematchRequested) {
-      console.log('\u5df2\u7ecf\u8bf7\u6c42\u518d\u6765\u4e00\u5c40\uff0c\u7b49\u5f85\u5bf9\u65b9\u786e\u8ba4')
+      console.log('已经请求再来一局，等待对方确认')
       return
     }
   
     this.rematchRequested = true
-    console.log('\u8bf7\u6c42\u5728\u7ebf\u518d\u6765\u4e00\u5c40')
+    console.log('请求在线再来一局')
   
     if (typeof this.onlineManager.requestRematch === 'function') {
       this.onlineManager.requestRematch()
@@ -986,6 +1110,8 @@ export default class BattleScene extends BaseScene {
   update(deltaTime) {
     this.animationManager.update(deltaTime)
     this.updateComboAnimations(deltaTime)
+    if (this.hasActiveChallengeTutorial()) return
+
     const state = this.engine.getState()
 
     // 只在人机模式 + AI回合 执行
@@ -1263,11 +1389,16 @@ export default class BattleScene extends BaseScene {
     if (this.turnCoverVisible) {
       this.drawTurnCover()
     }
+
+    if (this.hasActiveChallengeTutorial()) {
+      this.drawChallengeTutorialOverlay()
+    }
   }
 
   drawBattleBackground() {
     const ctx = this.ctx
-    const image = getImageAsset('menuBackground')
+    const theme = getActiveAppearanceTheme()
+    const image = getImageAsset((theme.background && theme.background.imageAsset) || 'menuBackground')
 
     if (image && !image.failed && image.loaded) {
       const imageRatio = image.width / image.height
@@ -1288,29 +1419,29 @@ export default class BattleScene extends BaseScene {
       }
 
       ctx.drawImage(image, drawX, drawY, drawW, drawH)
-      ctx.fillStyle = 'rgba(244, 252, 255, 0.78)'
+      ctx.fillStyle = theme.background.imageOverlay || 'rgba(244, 252, 255, 0.78)'
       ctx.fillRect(0, 0, this.width, this.height)
       return
     }
 
-    ctx.fillStyle = UITheme.colors.background
+    ctx.fillStyle = theme.colors.background
     ctx.fillRect(0, 0, this.width, this.height)
   }
 
   getRestartText(state) {
     if (this.mode === 'online' && this.rematchRequested) {
-      return '\u7b49\u5f85\u5bf9\u65b9\u786e\u8ba4...'
+      return '等待对方确认...'
     }
 
     if (this.challengeMode) {
       if (state.winnerId === 'p1' && this.challengeLevelIndex < this.challengeLevels.length) {
-        return '\u4e0b\u4e00\u5173'
+        return '下一关'
       }
 
-      return '\u91cd\u8bd5\u672c\u5173'
+      return '重试本关'
     }
 
-    return '\u518d\u6765\u4e00\u5c40'
+    return '再来一局'
   }
 
   drawChallengeHud() {
@@ -1318,7 +1449,7 @@ export default class BattleScene extends BaseScene {
     const meta = this.currentChallengeLevel
     if (!meta) return
 
-    const text = `\u95ef\u5173 ${meta.index}/${this.challengeLevels.length || 99}  \u8bc4\u5206 ${meta.score}  ${this.getAiDifficultyLabel(meta.aiDifficulty)}`
+    const text = `闯关 ${meta.index}/${this.challengeLevels.length || 99}  评分 ${meta.score}  ${this.getAiDifficultyLabel(meta.aiDifficulty)}`
     const x = this.width / 2
     const y = this.backButton.y + this.backButton.height / 2
     const w = Math.min(this.width - 170, 260)
@@ -1340,9 +1471,16 @@ export default class BattleScene extends BaseScene {
   }
 
   getAiDifficultyLabel(difficulty) {
-    if (difficulty === 'inferno') return '\u70bc\u72f1 AI'
-    if (difficulty === 'hard') return '\u56f0\u96be AI'
-    return '\u666e\u901a AI'
+    if (difficulty === 'inferno') return '炼狱 AI'
+    if (difficulty === 'hard') return '困难 AI'
+    return '普通 AI'
+  }
+
+  getPlayerColor(playerId) {
+    const colors = getActiveAppearanceTheme().colors
+    if (playerId === 'p1') return colors.p1
+    if (playerId === 'p2') return colors.p2
+    return colors.primary
   }
 
   /**
@@ -1365,7 +1503,7 @@ export default class BattleScene extends BaseScene {
         ? this.safeLayout.insets.top + 120
         : H - this.safeLayout.insets.bottom - cardH - 88
     
-      const color = PLAYER_COLORS[playerId]
+      const color = this.getPlayerColor(playerId)
       const score = state.scores[playerId] ?? 0
       const total = this.engine.getMaxScore()
       const isMe = this.mode === 'online' && this.localPlayerId === playerId
@@ -1436,7 +1574,7 @@ export default class BattleScene extends BaseScene {
         ctx.font = 'bold 11px Arial'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        ctx.fillText('\u6211', tagX + tagW / 2, tagY + tagH / 2 + 1)
+        ctx.fillText('我', tagX + tagW / 2, tagY + tagH / 2 + 1)
       }
     
       // Current turn label.
@@ -1445,7 +1583,7 @@ export default class BattleScene extends BaseScene {
         ctx.font = '13px Arial'
         ctx.textAlign = 'left'
         ctx.textBaseline = 'middle'
-        ctx.fillText('\u5f53\u524d\u56de\u5408', nameX, cardY + cardH / 2 + 12)
+        ctx.fillText('当前回合', nameX, cardY + cardH / 2 + 12)
       }
     
       // ── 右侧分数 ──────────────────────────────────────────
@@ -1485,7 +1623,7 @@ export default class BattleScene extends BaseScene {
     const cardH = 58
     const cardX = playerId === 'p1' ? 14 : this.width - cardW - 14
     const cardY = this.safeLayout.top
-    const color = PLAYER_COLORS[playerId]
+    const color = this.getPlayerColor(playerId)
     const score = state.scores[playerId] ?? 0
     const total = this.engine.getMaxScore()
     const ratio = total > 0 ? score / total : 0
@@ -1528,10 +1666,10 @@ export default class BattleScene extends BaseScene {
       ctx.fill()
       ctx.fillStyle = '#FFFFFF'
       ctx.textAlign = 'center'
-      ctx.fillText('\u6211', cardX + 65, cardY + 35)
+      ctx.fillText('我', cardX + 65, cardY + 35)
     } else if (isCurrent) {
       ctx.fillStyle = UITheme.colors.warning
-      ctx.fillText('\u56de\u5408', cardX + 50, cardY + 35)
+      ctx.fillText('回合', cardX + 50, cardY + 35)
     }
 
     ctx.textAlign = 'right'
@@ -1567,7 +1705,7 @@ export default class BattleScene extends BaseScene {
     ctx.font = 'bold 24px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText('\u2039', b.x + b.width / 2, b.y + b.height / 2 - 1)
+    ctx.fillText('‹', b.x + b.width / 2, b.y + b.height / 2 - 1)
     ctx.restore()
   }
 
@@ -1631,7 +1769,7 @@ export default class BattleScene extends BaseScene {
   ctx.font = 'bold 15px Arial'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText('\u2190 \u8fd4\u56de', b.x + b.width / 2 + 3, b.y + b.height / 2)
+  ctx.fillText('← 返回', b.x + b.width / 2 + 3, b.y + b.height / 2)
 
   ctx.restore()
 }
@@ -1644,15 +1782,15 @@ export default class BattleScene extends BaseScene {
       ? this.canRequestOnlineUndo()
       : this.canUndoPlayerMove()
     const undoText = this.isOnlineUndoEnabled() && this.undoRequested
-      ? '\u7b49\u5f85\u540c\u610f'
+      ? '等待同意'
       : this.hasPendingOnlineUndoFromOpponent()
-        ? '\u540c\u610f\u6094\u68cb'
-        : '\u6094\u68cb'
+        ? '同意悔棋'
+        : '悔棋'
 
     this.drawAssistButton(this.getUndoButton(), undoText, undoEnabled)
 
     if (this.isAiAssistEnabled()) {
-      this.drawAssistButton(this.hintButton, '\u63d0\u793a', this.canUseAiAssist())
+      this.drawAssistButton(this.hintButton, '提示', this.canUseAiAssist())
     }
   }
 
@@ -1886,7 +2024,7 @@ export default class BattleScene extends BaseScene {
     const alpha = Math.max(0, Math.min(1, intro * outro))
     const scale = 0.86 + 0.18 * this.easeOutBack(intro)
     const lift = 12 * t
-    const color = PLAYER_COLORS[combo.playerId] || UITheme.colors.primary
+    const color = this.getPlayerColor(combo.playerId) || getActiveAppearanceTheme().colors.primary
     const w = Math.max(128, Math.min(188, this.width - 116))
     const h = 34
     const y = this.getComboAnimationY() - lift
@@ -1978,11 +2116,248 @@ export default class BattleScene extends BaseScene {
     ctx.textBaseline = 'middle'
 
     ctx.font = 'bold 28px Arial'
-    ctx.fillText(`\u5207\u6362\u5230${playerName}`, this.width / 2, this.height / 2 - 24)
+    ctx.fillText(`切换到${playerName}`, this.width / 2, this.height / 2 - 24)
 
     ctx.font = '18px Arial'
     ctx.fillStyle = UITheme.colors.muted
-    ctx.fillText('\u70b9\u51fb\u4efb\u610f\u5904\u7ee7\u7eed', this.width / 2, this.height / 2 + 24)
+    ctx.fillText('点击任意处继续', this.width / 2, this.height / 2 + 24)
     ctx.restore()
+  }
+
+  drawChallengeTutorialOverlay() {
+    const tutorial = this.activeChallengeTutorial
+    if (!tutorial) return
+
+    if (tutorial.key === 'hole') {
+      this.drawHoleTutorialBubble(tutorial)
+      return
+    }
+
+    const ctx = this.ctx
+    const panelW = Math.min(this.width - 48, 324)
+    const panelH = 206
+    const panelX = (this.width - panelW) / 2
+    const panelY = Math.max(this.safeLayout.top + 96, this.height / 2 - panelH / 2)
+    const accent = tutorial.accent || UITheme.colors.primary
+    const buttonW = 112
+    const buttonH = 38
+    const buttonX = panelX + panelW - buttonW - 18
+    const buttonY = panelY + panelH - buttonH - 18
+
+    this.challengeTutorialButton = {
+      x: buttonX,
+      y: buttonY,
+      width: buttonW,
+      height: buttonH
+    }
+
+    ctx.save()
+    ctx.fillStyle = 'rgba(24, 50, 74, 0.58)'
+    ctx.fillRect(0, 0, this.width, this.height)
+
+    this._roundRect(ctx, panelX, panelY, panelW, panelH, UITheme.radius.lg)
+    ctx.fillStyle = UITheme.colors.surface
+    ctx.fill()
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    ctx.fillStyle = accent
+    this._roundRect(ctx, panelX, panelY, 8, panelH, UITheme.radius.lg)
+    ctx.fill()
+
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = 'bold 19px Arial'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'top'
+    ctx.fillText(tutorial.title, panelX + 24, panelY + 20)
+
+    ctx.fillStyle = UITheme.colors.muted
+    ctx.font = '15px Arial'
+    this.drawWrappedText(tutorial.body, panelX + 24, panelY + 58, panelW - 48, 22, 4)
+
+    ctx.fillStyle = accent
+    this._roundRect(ctx, buttonX, buttonY, buttonW, buttonH, UITheme.radius.md)
+    ctx.fill()
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = 'bold 15px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(this.challengeTutorialQueue.length > 0 ? '下一个' : '知道了', buttonX + buttonW / 2, buttonY + buttonH / 2)
+    ctx.restore()
+  }
+
+  drawHoleTutorialBubble(tutorial) {
+    const ctx = this.ctx
+    const target = this.getFirstHoleMarkerCenter()
+
+    if (!target) {
+      this.drawChallengeTutorialOverlayCard(tutorial)
+      return
+    }
+
+    const accent = tutorial.accent || UITheme.colors.danger
+    const bubbleW = Math.min(this.width - 42, 304)
+    const bubbleH = 168
+    const gap = 28
+    let bubbleX = (this.width - bubbleW) / 2
+    let bubbleY = target.y > this.height * 0.5
+      ? Math.max(this.safeLayout.top + 76, target.y - bubbleH - gap)
+      : Math.min(this.height - this.safeLayout.bottom - bubbleH - 76, target.y + gap)
+
+    if (bubbleY < this.safeLayout.top + 72) {
+      bubbleY = this.safeLayout.top + 72
+    }
+
+    const buttonW = 104
+    const buttonH = 36
+    const buttonX = bubbleX + bubbleW - buttonW - 16
+    const buttonY = bubbleY + bubbleH - buttonH - 14
+
+    this.challengeTutorialButton = {
+      x: buttonX,
+      y: buttonY,
+      width: buttonW,
+      height: buttonH
+    }
+
+    ctx.save()
+    ctx.fillStyle = 'rgba(24, 50, 74, 0.38)'
+    ctx.fillRect(0, 0, this.width, this.height)
+
+    this.drawHoleTargetPulse(target, accent)
+
+    const anchorX = Math.max(bubbleX + 34, Math.min(bubbleX + bubbleW - 34, target.x))
+    const anchorY = target.y < bubbleY ? bubbleY : bubbleY + bubbleH
+
+    ctx.beginPath()
+    ctx.moveTo(anchorX - 13, anchorY)
+    ctx.lineTo(anchorX + 13, anchorY)
+    ctx.lineTo(target.x, target.y)
+    ctx.closePath()
+    ctx.fillStyle = UITheme.colors.surface
+    ctx.fill()
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    this._roundRect(ctx, bubbleX, bubbleY, bubbleW, bubbleH, UITheme.radius.lg)
+    ctx.fillStyle = UITheme.colors.surface
+    ctx.fill()
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    ctx.fillStyle = accent
+    ctx.beginPath()
+    ctx.arc(bubbleX + 28, bubbleY + 28, 12, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = 'bold 18px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('!', bubbleX + 28, bubbleY + 29)
+
+    ctx.fillStyle = UITheme.colors.text
+    ctx.font = 'bold 18px Arial'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'top'
+    ctx.fillText(tutorial.title, bubbleX + 48, bubbleY + 18)
+
+    ctx.fillStyle = UITheme.colors.muted
+    ctx.font = '15px Arial'
+    this.drawWrappedText(tutorial.body, bubbleX + 18, bubbleY + 52, bubbleW - 36, 21, 3)
+
+    ctx.fillStyle = accent
+    this._roundRect(ctx, buttonX, buttonY, buttonW, buttonH, UITheme.radius.md)
+    ctx.fill()
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = 'bold 15px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(this.challengeTutorialQueue.length > 0 ? '下一个' : '知道了', buttonX + buttonW / 2, buttonY + buttonH / 2)
+    ctx.restore()
+  }
+
+  drawChallengeTutorialOverlayCard(tutorial) {
+    const savedKey = tutorial.key
+    tutorial.key = ''
+    this.drawChallengeTutorialOverlay()
+    tutorial.key = savedKey
+  }
+
+  getFirstHoleMarkerCenter() {
+    const special = this.engine && this.engine.board && this.engine.board.challengeMeta
+      ? this.engine.board.challengeMeta.special
+      : null
+    const markers = special && Array.isArray(special.holeMarkers) ? special.holeMarkers : []
+    const marker = markers.find(item => item && Array.isArray(item.points) && item.points.length >= 3)
+
+    if (!marker) return null
+
+    const points = marker.points.map(point => ({
+      x: this.layout.originX + point[0] * this.layout.cellSize,
+      y: this.layout.originY + point[1] * this.layout.cellSize
+    }))
+
+    const total = points.reduce((sum, point) => {
+      sum.x += point.x
+      sum.y += point.y
+      return sum
+    }, { x: 0, y: 0 })
+
+    return {
+      x: total.x / points.length,
+      y: total.y / points.length,
+      radius: Math.max(24, this.layout.cellSize * 0.58)
+    }
+  }
+
+  drawHoleTargetPulse(target, accent) {
+    const ctx = this.ctx
+    const time = Date.now() / 650
+    const pulse = 0.5 + 0.5 * Math.sin(time)
+    const radius = target.radius + pulse * 8
+
+    ctx.save()
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 3
+    ctx.shadowColor = accent
+    ctx.shadowBlur = 10
+    ctx.beginPath()
+    ctx.arc(target.x, target.y, radius, 0, Math.PI * 2)
+    ctx.stroke()
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)'
+    ctx.beginPath()
+    ctx.arc(target.x, target.y, Math.max(10, target.radius * 0.72), 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+
+  drawWrappedText(text, x, y, maxWidth, lineHeight, maxLines) {
+    const ctx = this.ctx
+    const chars = `${text}`.split('')
+    const lines = []
+    let line = ''
+
+    for (const char of chars) {
+      const next = line + char
+      if (line && ctx.measureText(next).width > maxWidth) {
+        lines.push(line)
+        line = char
+        if (lines.length >= maxLines) break
+      } else {
+        line = next
+      }
+    }
+
+    if (line && lines.length < maxLines) {
+      lines.push(line)
+    }
+
+    lines.forEach((item, index) => {
+      ctx.fillText(item, x, y + index * lineHeight)
+    })
   }
 }
